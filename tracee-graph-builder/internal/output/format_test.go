@@ -34,6 +34,7 @@ func TestEncodeTable(t *testing.T) {
 	assert.Contains(t, text, "IOCs")
 	assert.Contains(t, text, "Process trees")
 	assert.Contains(t, text, "Files")
+	assert.Contains(t, text, "Network")
 	assert.Contains(t, text, "decoy_file_read")
 	assert.Contains(t, text, "/etc/shadow")
 	assert.Contains(t, text, "READ:")

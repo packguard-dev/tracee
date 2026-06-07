@@ -29,13 +29,18 @@ func (c *Correlator) Apply(builder *graph.Builder) {
 func (c *Correlator) ApplyParallel(builder *graph.Builder, workers int) {
 	nodes := builder.Nodes()
 	files := builder.FileByID()
+	networks := builder.NetworkByID()
 	iocs := builder.IOCs()
 	if len(iocs) == 0 {
 		return
 	}
 
 	byProcess := buildFileIndex(files)
+	byProcessNetwork := buildNetworkIndex(networks)
 	fileByPath := builder.FileByPath()
+	networkByDomain := builder.NetworkByDomain()
+	networkByAddress := builder.NetworkByAddress()
+	networkByEndpoint := builder.NetworkByEndpoint()
 	renameRecords := append([]model.FileRecord(nil), builder.Files().Rename...)
 
 	workers = parallel.WorkerCount(workers)
@@ -45,8 +50,12 @@ func (c *Correlator) ApplyParallel(builder *graph.Builder, workers int) {
 			iocs[i],
 			nodes,
 			fileByPath,
+			networkByDomain,
+			networkByAddress,
+			networkByEndpoint,
 			renameRecords,
 			byProcess,
+			byProcessNetwork,
 			c.window,
 		)
 		return nil
@@ -60,6 +69,12 @@ func (c *Correlator) ApplyParallel(builder *graph.Builder, workers int) {
 			record.IOCIDs = appendUnique(record.IOCIDs, patch.IOC.ID)
 			files[fileID] = record
 			builder.UpdateFileRecord(record)
+		}
+		for _, networkID := range patch.IOC.RelatedNetworkIDs {
+			record := networks[networkID]
+			record.IOCIDs = appendUnique(record.IOCIDs, patch.IOC.ID)
+			networks[networkID] = record
+			builder.UpdateNetworkRecord(record)
 		}
 		for _, processKey := range patch.IOC.RelatedProcessKeys {
 			node := nodes[processKey]
@@ -79,12 +94,17 @@ func correlateOne(
 	ioc model.IOCRecord,
 	nodes map[string]model.ProcessNode,
 	fileByPath map[string][]string,
+	networkByDomain map[string][]string,
+	networkByAddress map[string][]string,
+	networkByEndpoint map[string][]string,
 	renameRecords []model.FileRecord,
 	byProcess map[string][]model.FileRecord,
+	byProcessNetwork map[string][]model.NetworkRecord,
 	window time.Duration,
 ) correlationPatch {
 	relatedProcesses := make(map[string]struct{})
 	relatedFiles := make(map[string]struct{})
+	relatedNetworks := make(map[string]struct{})
 	relations := make([]model.IOCRelation, 0)
 
 	if ioc.ProcessKey != "" {
@@ -133,6 +153,38 @@ func correlateOne(
 		}
 	}
 
+	endpoints := networkEndpointsFromIOC(ioc)
+	for _, domain := range endpoints.domains {
+		for _, networkID := range networkByDomain[domain] {
+			relatedNetworks[networkID] = struct{}{}
+			relations = append(relations, model.IOCRelation{
+				Kind:   "network",
+				Target: networkID,
+				Reason: "direct_network_field",
+			})
+		}
+	}
+	for _, dst := range endpoints.addresses {
+		for _, networkID := range networkByAddress[dst] {
+			relatedNetworks[networkID] = struct{}{}
+			relations = append(relations, model.IOCRelation{
+				Kind:   "network",
+				Target: networkID,
+				Reason: "direct_network_field",
+			})
+		}
+	}
+	for _, endpoint := range endpoints.endpoints {
+		for _, networkID := range networkByEndpoint[endpoint] {
+			relatedNetworks[networkID] = struct{}{}
+			relations = append(relations, model.IOCRelation{
+				Kind:   "network",
+				Target: networkID,
+				Reason: "direct_network_endpoint",
+			})
+		}
+	}
+
 	if taintedPID, ok := input.Uint32FromField(ioc.Fields, "tainted_pid"); ok && taintedPID != 0 {
 		taintedKey := fmt.Sprintf("pid:%d", taintedPID)
 		relatedProcesses[taintedKey] = struct{}{}
@@ -152,10 +204,19 @@ func correlateOne(
 				Reason: "family_process_window",
 			})
 		}
+		for _, record := range networksInWindow(byProcessNetwork[processKey], ioc.Timestamp, window) {
+			relatedNetworks[record.ID] = struct{}{}
+			relations = append(relations, model.IOCRelation{
+				Kind:   "network",
+				Target: record.ID,
+				Reason: "family_process_window",
+			})
+		}
 	}
 
 	ioc.RelatedProcessKeys = keysFromSet(relatedProcesses)
 	ioc.RelatedFileIDs = keysFromSet(relatedFiles)
+	ioc.RelatedNetworkIDs = keysFromSet(relatedNetworks)
 	ioc.Relations = dedupeRelations(relations)
 
 	return correlationPatch{IOC: ioc}
@@ -174,7 +235,36 @@ func buildFileIndex(files map[string]model.FileRecord) map[string][]model.FileRe
 	return byProcess
 }
 
+func buildNetworkIndex(networks map[string]model.NetworkRecord) map[string][]model.NetworkRecord {
+	byProcess := make(map[string][]model.NetworkRecord)
+	for _, record := range networks {
+		byProcess[record.ProcessKey] = append(byProcess[record.ProcessKey], record)
+	}
+	for processKey := range byProcess {
+		sort.Slice(byProcess[processKey], func(i, j int) bool {
+			return byProcess[processKey][i].Timestamp.Before(byProcess[processKey][j].Timestamp)
+		})
+	}
+	return byProcess
+}
+
 func filesInWindow(records []model.FileRecord, iocTime time.Time, window time.Duration) []model.FileRecord {
+	if len(records) == 0 || iocTime.IsZero() {
+		return nil
+	}
+	lo := iocTime.Add(-window)
+	hi := iocTime.Add(window)
+
+	start := sort.Search(len(records), func(i int) bool {
+		return !records[i].Timestamp.Before(lo)
+	})
+	end := sort.Search(len(records), func(i int) bool {
+		return records[i].Timestamp.After(hi)
+	})
+	return records[start:end]
+}
+
+func networksInWindow(records []model.NetworkRecord, iocTime time.Time, window time.Duration) []model.NetworkRecord {
 	if len(records) == 0 || iocTime.IsZero() {
 		return nil
 	}
@@ -282,6 +372,131 @@ func filePathsFromIOC(ioc model.IOCRecord) []string {
 		}
 	}
 	return uniqueStrings(paths)
+}
+
+type networkEndpointMatch struct {
+	domains   []string
+	addresses []string
+	endpoints []string
+}
+
+func networkEndpointsFromIOC(ioc model.IOCRecord) networkEndpointMatch {
+	domains := make([]string, 0)
+	addresses := make([]string, 0)
+	endpoints := make([]string, 0)
+
+	addDomain := func(name string) {
+		name = strings.TrimSpace(strings.ToLower(name))
+		if name != "" {
+			domains = append(domains, name)
+		}
+	}
+	addAddress := func(addr string) {
+		addr = strings.TrimSpace(addr)
+		if addr != "" {
+			addresses = append(addresses, addr)
+		}
+	}
+	addEndpoint := func(dst string, port int32) {
+		dst = strings.TrimSpace(dst)
+		if dst == "" {
+			return
+		}
+		endpoints = append(endpoints, fmt.Sprintf("%s:%d", dst, port))
+	}
+
+	for _, name := range []string{"domain", "query", "base_domain"} {
+		addDomain(input.StringFromField(ioc.Fields, name))
+	}
+	if dst := input.StringFromField(ioc.Fields, "dst"); dst != "" {
+		addAddress(dst)
+		if port, ok := input.Int32FromField(ioc.Fields, "dst_port"); ok {
+			addEndpoint(dst, port)
+		}
+	}
+
+	if ioc.DetectedFrom != nil {
+		for _, name := range []string{"domain", "query"} {
+			addDomain(input.StringFromField(ioc.DetectedFrom.Data, name))
+		}
+		if dst := packetMetadataString(ioc.DetectedFrom.Data, "dst_ip"); dst != "" {
+			addAddress(dst)
+			if port, ok := packetMetadataInt32(ioc.DetectedFrom.Data, "dst_port"); ok {
+				addEndpoint(dst, port)
+			}
+		}
+		for _, query := range dnsQuestionsFromData(ioc.DetectedFrom.Data) {
+			addDomain(query)
+		}
+	}
+
+	return networkEndpointMatch{
+		domains:   uniqueStrings(domains),
+		addresses: uniqueStrings(addresses),
+		endpoints: uniqueStrings(endpoints),
+	}
+}
+
+func packetMetadataString(data map[string]any, field string) string {
+	if data == nil {
+		return ""
+	}
+	meta, ok := data["packet_metadata"].(map[string]any)
+	if !ok {
+		if meta, ok = data["metadata"].(map[string]any); !ok {
+			return ""
+		}
+	}
+	return input.StringFromField(meta, field)
+}
+
+func packetMetadataInt32(data map[string]any, field string) (int32, bool) {
+	if data == nil {
+		return 0, false
+	}
+	meta, ok := data["packet_metadata"].(map[string]any)
+	if !ok {
+		if meta, ok = data["metadata"].(map[string]any); !ok {
+			return 0, false
+		}
+	}
+	return input.Int32FromField(meta, field)
+}
+
+func dnsQuestionsFromData(data map[string]any) []string {
+	if data == nil {
+		return nil
+	}
+	questionsRaw, ok := data["dns_questions"]
+	if !ok {
+		return nil
+	}
+	switch typed := questionsRaw.(type) {
+	case map[string]any:
+		if questions, ok := typed["questions"].([]any); ok {
+			return dnsQuestionNames(questions)
+		}
+	case []any:
+		return dnsQuestionNames(typed)
+	}
+	return nil
+}
+
+func dnsQuestionNames(items []any) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		switch typed := item.(type) {
+		case map[string]any:
+			if query := input.StringFromField(typed, "query", "name"); query != "" {
+				out = append(out, query)
+			}
+		case string:
+			if typed != "" {
+				out = append(out, typed)
+			}
+		}
+	}
+	return out
 }
 
 func renameLinkedFiles(builder *graph.Builder, path string) []string {

@@ -14,12 +14,24 @@ import (
 	"github.com/aquasecurity/tracee/tracee-graph-builder/internal/parallel"
 )
 
+const (
+	devInodeSourceFileModification = "file_modification"
+	devInodeSourceFileOpenWrite    = "security_file_open"
+	devInodeSourceProcessExec      = "sched_process_exec"
+)
+
 type Builder struct {
 	nodes                map[string]model.ProcessNode
 	files                model.FileGroups
 	fileByID             map[string]model.FileRecord
 	fileByPath           map[string][]string
 	fileByInode          map[string][]string
+	pathDevInode         map[string][]model.DevInodeRef
+	networks             model.NetworkGroups
+	networkByID          map[string]model.NetworkRecord
+	networkByDomain      map[string][]string
+	networkByAddress     map[string][]string
+	networkByEndpoint    map[string][]string
 	iocs                 []model.IOCRecord
 	iocByID              map[string]int
 	nextFileID           int
@@ -38,6 +50,11 @@ func NewBuilderWithWhitelist(wl filter.Whitelist) *Builder {
 		fileByID:             make(map[string]model.FileRecord),
 		fileByPath:           make(map[string][]string),
 		fileByInode:          make(map[string][]string),
+		pathDevInode:         make(map[string][]model.DevInodeRef),
+		networkByID:          make(map[string]model.NetworkRecord),
+		networkByDomain:      make(map[string][]string),
+		networkByAddress:     make(map[string][]string),
+		networkByEndpoint:    make(map[string][]string),
 		iocByID:              make(map[string]int),
 		whitelist:            wl,
 		whitelistedProcesses: make(map[string]struct{}),
@@ -83,6 +100,19 @@ func (b *Builder) IngestParallel(events []model.NormalizedEvent, workers int) {
 	for _, record := range fileResults {
 		if record != nil {
 			b.addFileRecord(*record)
+		}
+	}
+
+	networkResults := make([]*model.NetworkRecord, len(sorted))
+	_ = parallel.Run(context.Background(), workers, len(sorted), func(i int) error {
+		if record := buildNetworkRecord(sorted[i], b.whitelist, b.whitelistedProcesses); record != nil {
+			networkResults[i] = record
+		}
+		return nil
+	})
+	for _, record := range networkResults {
+		if record != nil {
+			b.addNetworkRecord(*record)
 		}
 	}
 
@@ -220,6 +250,13 @@ func (b *Builder) handleExec(ev model.NormalizedEvent) {
 	}
 	if b.whitelist.IsCommandExcluded(node.ExecutablePath, node.CommandLine, node.Argv) {
 		b.whitelistedProcesses[ev.ProcessKey] = struct{}{}
+	}
+	if node.ExecutablePath != "" {
+		if dev, okDev := input.Uint32FromField(ev.Fields, "dev"); okDev {
+			if inode, okInode := input.Uint64FromField(ev.Fields, "inode"); okInode && dev != 0 && inode != 0 {
+				b.indexPathDevInode(node.ExecutablePath, dev, inode, devInodeSourceProcessExec)
+			}
+		}
 	}
 	b.nodes[ev.ProcessKey] = node
 }
@@ -424,6 +461,42 @@ func buildFileRecord(
 	}
 }
 
+func buildNetworkRecord(
+	ev model.NormalizedEvent,
+	wl filter.Whitelist,
+	whitelistedProcesses map[string]struct{},
+) *model.NetworkRecord {
+	if ev.EventName != "net_tcp_connect" {
+		return nil
+	}
+	if _, ok := whitelistedProcesses[ev.ProcessKey]; ok {
+		return nil
+	}
+
+	dst := input.StringFromField(ev.Fields, "dst")
+	if dst == "" {
+		return nil
+	}
+
+	dstDNS := input.StringSliceFromField(ev.Fields, "dst_dns")
+	if wl.ShouldExcludeNetworkRecord(dstDNS) {
+		return nil
+	}
+
+	dstPort, _ := input.Int32FromField(ev.Fields, "dst_port")
+
+	return &model.NetworkRecord{
+		ID:         networkRecordID(ev.Index),
+		Operation:  model.NetworkOpConnect,
+		Dst:        dst,
+		DstPort:    dstPort,
+		DstDNS:     dstDNS,
+		Timestamp:  ev.Timestamp,
+		ProcessKey: ev.ProcessKey,
+		EventName:  "net_tcp_connect",
+	}
+}
+
 func buildIOCRecord(ev model.NormalizedEvent) *model.IOCRecord {
 	if !ev.IsIOC {
 		return nil
@@ -440,6 +513,10 @@ func buildIOCRecord(ev model.NormalizedEvent) *model.IOCRecord {
 
 func fileRecordID(index int) string {
 	return fmt.Sprintf("file-%d", index)
+}
+
+func networkRecordID(index int) string {
+	return fmt.Sprintf("net-%d", index)
 }
 
 func iocRecordID(index int) string {
@@ -481,10 +558,36 @@ func (b *Builder) addFileRecord(record model.FileRecord) {
 		b.files.Read = append(b.files.Read, record)
 	case model.FileOpWrite:
 		b.files.Write = append(b.files.Write, record)
+		if record.Dev != 0 && record.Inode != 0 && record.Path != "" {
+			source := record.EventName
+			if source == "" {
+				source = devInodeSourceFileModification
+			}
+			b.indexPathDevInode(record.Path, record.Dev, record.Inode, source)
+		}
 	case model.FileOpDelete:
 		b.files.Delete = append(b.files.Delete, record)
 	case model.FileOpRename:
 		b.files.Rename = append(b.files.Rename, record)
+	}
+}
+
+func (b *Builder) addNetworkRecord(record model.NetworkRecord) {
+	b.networkByID[record.ID] = record
+	for _, domain := range record.DstDNS {
+		if domain == "" {
+			continue
+		}
+		b.networkByDomain[domain] = append(b.networkByDomain[domain], record.ID)
+	}
+	if record.Dst != "" {
+		b.networkByAddress[record.Dst] = append(b.networkByAddress[record.Dst], record.ID)
+		key := networkEndpointKey(record.Dst, record.DstPort)
+		b.networkByEndpoint[key] = append(b.networkByEndpoint[key], record.ID)
+	}
+
+	if record.Operation == model.NetworkOpConnect {
+		b.networks.Connect = append(b.networks.Connect, record)
 	}
 }
 
@@ -532,6 +635,8 @@ func classifyOpenFlagsInt(flags int) (operation, flagsText string) {
 func (b *Builder) Nodes() map[string]model.ProcessNode { return b.nodes }                                                      
                                                                                                                                                                                                                                                                      func (b *Builder) Files() model.FileGroups { return b.files }
 
+func (b *Builder) Networks() model.NetworkGroups { return b.networks }
+
 func (b *Builder) UpdateFileRecord(record model.FileRecord) {
 	b.fileByID[record.ID] = record
 	switch record.Operation {
@@ -555,6 +660,24 @@ func replaceRecord(records []model.FileRecord, updated model.FileRecord) []model
 	}
 	return records
 }
+
+func (b *Builder) UpdateNetworkRecord(record model.NetworkRecord) {
+	b.networkByID[record.ID] = record
+	if record.Operation == model.NetworkOpConnect {
+		b.networks.Connect = replaceNetworkRecord(b.networks.Connect, record)
+	}
+}
+
+func replaceNetworkRecord(records []model.NetworkRecord, updated model.NetworkRecord) []model.NetworkRecord {
+	for i, record := range records {
+		if record.ID == updated.ID {
+			records[i] = updated
+			return records
+		}
+	}
+	return records
+}
+
 func (b *Builder) FileByID() map[string]model.FileRecord {
 	return b.fileByID
 }
@@ -562,6 +685,83 @@ func (b *Builder) FileByPath() map[string][]string { return b.fileByPath }
 func (b *Builder) FileByInode() map[string][]string {
 	return b.fileByInode
 }
+
+func (b *Builder) PathDevInodeIndex() map[string][]model.DevInodeRef {
+	out := make(map[string][]model.DevInodeRef, len(b.pathDevInode))
+	for path, refs := range b.pathDevInode {
+		out[path] = append([]model.DevInodeRef(nil), refs...)
+	}
+	return out
+}
+
+func (b *Builder) indexPathDevInode(path string, dev uint32, inode uint64, source string) {
+	if path == "" || dev == 0 || inode == 0 {
+		return
+	}
+	refs := b.pathDevInode[path]
+	for _, ref := range refs {
+		if ref.Dev == dev && ref.Inode == inode {
+			if devInodePriority(source) < devInodePriority(ref.Source) {
+				ref.Source = source
+				for i := range refs {
+					if refs[i].Dev == dev && refs[i].Inode == inode {
+						refs[i] = ref
+						break
+					}
+				}
+				b.pathDevInode[path] = sortDevInodeRefs(refs)
+			}
+			return
+		}
+	}
+	refs = append(refs, model.DevInodeRef{Dev: dev, Inode: inode, Source: source})
+	b.pathDevInode[path] = sortDevInodeRefs(refs)
+}
+
+func devInodePriority(source string) int {
+	switch source {
+	case devInodeSourceFileModification:
+		return 0
+	case devInodeSourceFileOpenWrite:
+		return 1
+	case devInodeSourceProcessExec:
+		return 2
+	default:
+		return 3
+	}
+}
+
+func sortDevInodeRefs(refs []model.DevInodeRef) []model.DevInodeRef {
+	sort.SliceStable(refs, func(i, j int) bool {
+		pi := devInodePriority(refs[i].Source)
+		pj := devInodePriority(refs[j].Source)
+		if pi != pj {
+			return pi < pj
+		}
+		if refs[i].Dev != refs[j].Dev {
+			return refs[i].Dev < refs[j].Dev
+		}
+		return refs[i].Inode < refs[j].Inode
+	})
+	return refs
+}
+
+func (b *Builder) NetworkByID() map[string]model.NetworkRecord {
+	return b.networkByID
+}
+
+func (b *Builder) NetworkByDomain() map[string][]string {
+	return b.networkByDomain
+}
+
+func (b *Builder) NetworkByAddress() map[string][]string {
+	return b.networkByAddress
+}
+
+func (b *Builder) NetworkByEndpoint() map[string][]string {
+	return b.networkByEndpoint
+}
+
 func (b *Builder) IOCs() []model.IOCRecord { return b.iocs }
 
 func (b *Builder) SetIOCs(iocs []model.IOCRecord) {
@@ -596,6 +796,10 @@ func (b *Builder) Roots() []string {
 
 func inodeKey(dev uint32, inode uint64) string {
 	return fmt.Sprintf("%d:%d", dev, inode)
+}
+
+func networkEndpointKey(dst string, port int32) string {
+	return fmt.Sprintf("%s:%d", dst, port)
 }
 
 func copyFields(in map[string]any) map[string]any {

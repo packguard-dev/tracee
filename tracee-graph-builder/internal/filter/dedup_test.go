@@ -185,3 +185,129 @@ func TestDedupFileEvents_DoesNotDedupAcrossEventTypes(t *testing.T) {
 	assert.Len(t, out, 2)
 }
 
+func TestDedupNetworkEvents_DropsWithinWindow(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 6, 7, 8, 0, 0, 0, time.UTC)
+	events := []model.NormalizedEvent{
+		{
+			EventName:  "net_tcp_connect",
+			ProcessKey: "uid:1",
+			Timestamp:  base,
+			Fields: map[string]any{
+				"dst":      "1.2.3.4",
+				"dst_port": int32(443),
+				"dst_dns":  []string{"example.com"},
+			},
+		},
+		{
+			EventName:  "net_tcp_connect",
+			ProcessKey: "uid:1",
+			Timestamp:  base.Add(10 * time.Second),
+			Fields: map[string]any{
+				"dst":      "1.2.3.4",
+				"dst_port": int32(443),
+				"dst_dns":  []string{"example.com"},
+			},
+		},
+	}
+
+	out := DedupNetworkEvents(events, 30*time.Second)
+	if assert.Len(t, out, 1) {
+		assert.Equal(t, base, out[0].Timestamp)
+	}
+}
+
+func TestDedupNetworkEvents_KeepsOutsideWindow(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 6, 7, 8, 0, 0, 0, time.UTC)
+	events := []model.NormalizedEvent{
+		{
+			EventName:  "net_tcp_connect",
+			ProcessKey: "uid:1",
+			Timestamp:  base,
+			Fields: map[string]any{
+				"dst":      "1.2.3.4",
+				"dst_port": int32(443),
+				"dst_dns":  []string{"example.com"},
+			},
+		},
+		{
+			EventName:  "net_tcp_connect",
+			ProcessKey: "uid:1",
+			Timestamp:  base.Add(31 * time.Second),
+			Fields: map[string]any{
+				"dst":      "1.2.3.4",
+				"dst_port": int32(443),
+				"dst_dns":  []string{"example.com"},
+			},
+		},
+	}
+
+	out := DedupNetworkEvents(events, 30*time.Second)
+	assert.Len(t, out, 2)
+}
+
+func TestDedupNetworkEvents_DifferentDNSNames(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 6, 7, 8, 0, 0, 0, time.UTC)
+	events := []model.NormalizedEvent{
+		{
+			EventName:  "net_tcp_connect",
+			ProcessKey: "uid:1",
+			Timestamp:  base,
+			Fields: map[string]any{
+				"dst":      "1.2.3.4",
+				"dst_port": int32(443),
+				"dst_dns":  []string{"a.example.com"},
+			},
+		},
+		{
+			EventName:  "net_tcp_connect",
+			ProcessKey: "uid:1",
+			Timestamp:  base.Add(5 * time.Second),
+			Fields: map[string]any{
+				"dst":      "1.2.3.4",
+				"dst_port": int32(443),
+				"dst_dns":  []string{"b.example.com"},
+			},
+		},
+	}
+
+	out := DedupNetworkEvents(events, 30*time.Second)
+	assert.Len(t, out, 2)
+}
+
+func TestDedupNetworkEvents_CanonicalizesDNSOrder(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 6, 7, 8, 0, 0, 0, time.UTC)
+	events := []model.NormalizedEvent{
+		{
+			EventName:  "net_tcp_connect",
+			ProcessKey: "uid:1",
+			Timestamp:  base,
+			Fields: map[string]any{
+				"dst":      "1.2.3.4",
+				"dst_port": int32(443),
+				"dst_dns":  []string{"a.example.com", "b.example.com"},
+			},
+		},
+		{
+			EventName:  "net_tcp_connect",
+			ProcessKey: "uid:1",
+			Timestamp:  base.Add(5 * time.Second),
+			Fields: map[string]any{
+				"dst":      "1.2.3.4",
+				"dst_port": int32(443),
+				"dst_dns":  []string{"b.example.com", "a.example.com"},
+			},
+		},
+	}
+
+	out := DedupNetworkEvents(events, 30*time.Second)
+	assert.Len(t, out, 1)
+}
+

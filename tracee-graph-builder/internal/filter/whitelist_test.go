@@ -57,3 +57,24 @@ func TestShouldExcludeFileRecord(t *testing.T) {
 	assert.False(t, wl.ShouldExcludeFileRecord("/tmp/payload.bin", "", ""))
 	assert.True(t, wl.ShouldExcludeFileRecord("/tmp/out", "/usr/lib/foo", "/tmp/out"))
 }
+
+func TestDefaultWhitelistDomains(t *testing.T) {
+	t.Parallel()
+
+	wl := DefaultWhitelist()
+	assert.True(t, wl.IsDomainExcluded("registry.npmjs.org"))
+	assert.True(t, wl.IsDomainExcluded("files.pythonhosted.org"))
+	assert.True(t, wl.IsDomainExcluded("marketplace.visualstudio.com"))
+	assert.False(t, wl.IsDomainExcluded("raw.githubusercontent.com"))
+	assert.False(t, wl.IsDomainExcluded("attacker.com"))
+}
+
+func TestShouldExcludeNetworkRecord(t *testing.T) {
+	t.Parallel()
+
+	wl := DefaultWhitelist()
+	assert.True(t, wl.ShouldExcludeNetworkRecord([]string{"registry.npmjs.org"}))
+	assert.False(t, wl.ShouldExcludeNetworkRecord([]string{"raw.githubusercontent.com"}))
+	assert.False(t, wl.ShouldExcludeNetworkRecord(nil))
+	assert.False(t, wl.ShouldExcludeNetworkRecord([]string{"registry.npmjs.org", "attacker.com"}))
+}

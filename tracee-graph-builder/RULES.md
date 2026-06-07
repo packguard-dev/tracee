@@ -6,7 +6,7 @@ eBPF, CGO, or runtime internals.
 ## Scope
 
 - Read Tracee JSON event files (NDJSON or JSON array).
-- Emit process tree, file activity, and IOC correlation JSON.
+- Emit process tree, file activity, network activity, and IOC correlation JSON.
 - Stay inside `tracee-graph-builder/` unless adding an optional Makefile target.
 
 ## Do Not
@@ -22,7 +22,9 @@ eBPF, CGO, or runtime internals.
 - Keep parsing tolerant: support current `v1beta1` JSON and legacy flat JSON.
 - Prefer `workload.process.unique_id` for process identity when present.
 - File groups are fixed: `READ`, `WRITE`, `DELETE`, `RENAME`.
+- Network groups are fixed: `CONNECT`.
 - IOC correlation window defaults to 5 minutes and must remain configurable.
+- Network dedup window is fixed at 30 seconds.
 
 ## Testing
 

@@ -105,6 +105,49 @@ func TestBuilderProcessAndFiles(t *testing.T) {
 	assert.Len(t, builder.IOCs(), 1)
 }
 
+func TestBuilderNetworkConnect(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 7, 8, 29, 3, 0, time.UTC)
+	events := []model.NormalizedEvent{
+		{
+			Index:      0,
+			Timestamp:  now,
+			EventName:  "net_tcp_connect",
+			ProcessKey: "uid:1029725475",
+			Fields: map[string]any{
+				"dst":      "185.199.108.133",
+				"dst_port": int32(443),
+				"dst_dns":  []string{"raw.githubusercontent.com"},
+			},
+		},
+		{
+			Index:      1,
+			Timestamp:  now.Add(10 * time.Second),
+			EventName:  "net_tcp_connect",
+			ProcessKey: "uid:1029725475",
+			Fields: map[string]any{
+				"dst":      "1.2.3.4",
+				"dst_port": int32(443),
+				"dst_dns":  []string{"registry.npmjs.org"},
+			},
+		},
+	}
+
+	builder := NewBuilder()
+	builder.Ingest(events)
+
+	require.Len(t, builder.Networks().Connect, 1)
+	record := builder.Networks().Connect[0]
+	assert.Equal(t, "net-0", record.ID)
+	assert.Equal(t, "185.199.108.133", record.Dst)
+	assert.Equal(t, int32(443), record.DstPort)
+	assert.Equal(t, []string{"raw.githubusercontent.com"}, record.DstDNS)
+	assert.Contains(t, builder.NetworkByDomain()["raw.githubusercontent.com"], "net-0")
+	assert.Contains(t, builder.NetworkByAddress()["185.199.108.133"], "net-0")
+	assert.Contains(t, builder.NetworkByEndpoint()["185.199.108.133:443"], "net-0")
+}
+
 func TestBuilderWhitelistExcludesNoisyPathsAndCommands(t *testing.T) {
 	t.Parallel()
 

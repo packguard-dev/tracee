@@ -115,4 +115,45 @@ func TestCorrelatorParallelParity(t *testing.T) {
 	require.Len(t, parBuilder.IOCs(), 1)
 	assert.Equal(t, seqBuilder.IOCs()[0], parBuilder.IOCs()[0])
 	assert.Equal(t, seqBuilder.Files(), parBuilder.Files())
+	assert.Equal(t, seqBuilder.Networks(), parBuilder.Networks())
+}
+
+func TestCorrelatorLinksIOCNetworkByDomain(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 7, 8, 29, 4, 0, time.UTC)
+	builder := graph.NewBuilder()
+	builder.Ingest([]model.NormalizedEvent{
+		{
+			Index:      0,
+			Timestamp:  now.Add(-1 * time.Second),
+			EventName:  "net_tcp_connect",
+			ProcessKey: "uid:1029725475",
+			Fields: map[string]any{
+				"dst":      "185.199.108.133",
+				"dst_port": int32(443),
+				"dst_dns":  []string{"raw.githubusercontent.com"},
+			},
+		},
+		{
+			Index:      1,
+			Timestamp:  now,
+			EventName:  "non_whitelisted_domain_connection",
+			ProcessKey: "uid:1029725475",
+			IsIOC:      true,
+			Fields: map[string]any{
+				"domain": "raw.githubusercontent.com",
+			},
+		},
+	})
+
+	New(5 * time.Minute).Apply(builder)
+
+	require.Len(t, builder.IOCs(), 1)
+	ioc := builder.IOCs()[0]
+	assert.NotEmpty(t, ioc.RelatedNetworkIDs)
+	assert.Contains(t, ioc.RelatedNetworkIDs, "net-0")
+
+	connect := builder.Networks().Connect[0]
+	assert.Contains(t, connect.IOCIDs, ioc.ID)
 }

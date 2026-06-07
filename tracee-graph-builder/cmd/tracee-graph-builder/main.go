@@ -14,6 +14,7 @@ import (
 
 func main() {
 	inputPath := flag.String("input", "", "Path to Tracee JSON input (NDJSON or JSON array)")
+	artifactsPath := flag.String("artifacts", "", "Optional path to artifacts.zip from Tracee --artifacts file-write")
 	outputPath := flag.String("output", "", "Path to write graph output (- or empty writes to stdout)")
 	outputFormat := flag.String("format", output.FormatJSON, "Output format: json or table")
 	windowSec := flag.Int("window-sec", 300, "IOC correlation window in seconds")
@@ -42,6 +43,12 @@ func main() {
 	opts.CorrelationWindow = time.Duration(*windowSec) * time.Second
 	opts.Workers = *workers
 	graphOutput := build.FromEvents(events, opts)
+
+	graphOutput, err = build.EnrichPayloads(graphOutput, *artifactsPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: enrich payloads: %v\n", err)
+		os.Exit(1)
+	}
 
 	encoded, err := output.Encode(*outputFormat, graphOutput)
 	if err != nil {

@@ -38,6 +38,26 @@ func TestFromEventsFixture(t *testing.T) {
 	assert.NotNil(t, node.ExitTime)
 }
 
+func TestFromEventsNetworkFixture(t *testing.T) {
+	t.Parallel()
+
+	f, err := os.Open("../../testdata/sample_net.ndjson")
+	require.NoError(t, err)
+	defer f.Close()
+
+	events, err := input.ReadEvents(f)
+	require.NoError(t, err)
+
+	output := FromEvents(events, model.DefaultBuildOptions())
+	assert.NotEmpty(t, output.Networks.Connect)
+	assert.Len(t, output.Networks.Connect, 1)
+
+	require.Len(t, output.IOCs, 1)
+	ioc := output.IOCs[0]
+	assert.NotEmpty(t, ioc.RelatedNetworkIDs)
+	assert.Contains(t, output.Networks.Connect[0].IOCIDs, ioc.ID)
+}
+
 func TestFromEventsParallelParity(t *testing.T) {
 	t.Parallel()
 

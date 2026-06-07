@@ -14,6 +14,7 @@ func FromEvents(events []model.NormalizedEvent, opts model.BuildOptions) model.O
 	workers := parallel.WorkerCount(opts.Workers)
 
 	events = filter.DedupFileEvents(events, 5*time.Minute)
+	events = filter.DedupNetworkEvents(events, 30*time.Second)
 
 	builder := graph.NewBuilder()
 	builder.IngestParallel(events, workers)
@@ -31,7 +32,9 @@ func FromEvents(events []model.NormalizedEvent, opts model.BuildOptions) model.O
 			Nodes: builder.Nodes(),
 			Roots: builder.Roots(),
 		},
-		Files: builder.Files(),
-		IOCs:  builder.IOCs(),
+		Files:        builder.Files(),
+		Networks:     builder.Networks(),
+		IOCs:         builder.IOCs(),
+		PathDevInode: builder.PathDevInodeIndex(),
 	}
 }

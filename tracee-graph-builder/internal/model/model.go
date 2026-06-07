@@ -3,10 +3,11 @@ package model
 import "time"
 
 const (
-	FileOpRead   = "READ"
-	FileOpWrite  = "WRITE"
-	FileOpDelete = "DELETE"
-	FileOpRename = "RENAME"
+	FileOpRead     = "READ"
+	FileOpWrite    = "WRITE"
+	FileOpDelete   = "DELETE"
+	FileOpRename   = "RENAME"
+	NetworkOpConnect = "CONNECT"
 )
 
 var (
@@ -21,6 +22,10 @@ var (
 		"security_inode_rename": {},
 		"file_modification":     {},
 		"security_inode_unlink": {},
+	}
+
+	NetworkActivityEvents = map[string]struct{}{
+		"net_tcp_connect": {},
 	}
 
 	DefaultIOCEvents = map[string]struct{}{
@@ -102,6 +107,45 @@ type FileGroups struct {
 	Rename []FileRecord `json:"RENAME"`
 }
 
+type NetworkRecord struct {
+	ID         string            `json:"id"`
+	Operation  string            `json:"operation"`
+	Dst        string            `json:"dst"`
+	DstPort    int32             `json:"dst_port,omitempty"`
+	DstDNS     []string          `json:"dst_dns,omitempty"`
+	Timestamp  time.Time         `json:"timestamp"`
+	ProcessKey string            `json:"process_key"`
+	EventName  string            `json:"event_name"`
+	IOCIDs     []string          `json:"ioc_ids,omitempty"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
+}
+
+type NetworkGroups struct {
+	Connect []NetworkRecord `json:"CONNECT"`
+}
+
+type DevInodeRef struct {
+	Dev    uint32 `json:"dev"`
+	Inode  uint64 `json:"inode"`
+	Source string `json:"source,omitempty"`
+}
+
+type PayloadInfo struct {
+	Path         string `json:"path,omitempty"`
+	Dev          uint32 `json:"dev,omitempty"`
+	Inode        uint64 `json:"inode,omitempty"`
+	SHA256       string `json:"sha256,omitempty"`
+	ArtifactPath string `json:"artifact_path,omitempty"`
+	Status       string `json:"status,omitempty"`
+}
+
+const (
+	PayloadStatusFound       = "found"
+	PayloadStatusNotInEvents = "not_in_events"
+	PayloadStatusNotInZip    = "not_in_zip"
+	PayloadStatusNoPath      = "no_path"
+)
+
 type IOCRecord struct {
 	ID                 string            `json:"id"`
 	Timestamp          time.Time         `json:"timestamp"`
@@ -109,9 +153,11 @@ type IOCRecord struct {
 	ProcessKey         string            `json:"process_key"`
 	Fields             map[string]any    `json:"fields,omitempty"`
 	DetectedFrom       *DetectedFromEvent `json:"detected_from,omitempty"`
-	RelatedProcessKeys []string          `json:"related_process_keys,omitempty"`
-	RelatedFileIDs     []string          `json:"related_file_ids,omitempty"`
-	Relations          []IOCRelation     `json:"relations,omitempty"`
+	RelatedProcessKeys  []string          `json:"related_process_keys,omitempty"`
+	RelatedFileIDs      []string          `json:"related_file_ids,omitempty"`
+	RelatedNetworkIDs   []string          `json:"related_network_ids,omitempty"`
+	Relations           []IOCRelation     `json:"relations,omitempty"`
+	Payload            *PayloadInfo      `json:"payload,omitempty"`
 }
 
 type IOCRelation struct {
@@ -126,10 +172,12 @@ type ProcessTree struct {
 }
 
 type Output struct {
-	Meta         OutputMeta  `json:"meta"`
-	ProcessTree  ProcessTree `json:"process_tree"`
-	Files        FileGroups  `json:"files"`
-	IOCs         []IOCRecord `json:"iocs"`
+	Meta         OutputMeta                 `json:"meta"`
+	ProcessTree  ProcessTree                `json:"process_tree"`
+	Files        FileGroups                 `json:"files"`
+	Networks     NetworkGroups              `json:"networks"`
+	IOCs         []IOCRecord                `json:"iocs"`
+	PathDevInode map[string][]DevInodeRef   `json:"-"`
 }
 
 type OutputMeta struct {

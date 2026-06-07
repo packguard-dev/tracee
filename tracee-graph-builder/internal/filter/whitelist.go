@@ -2,18 +2,34 @@ package filter
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 )
 
-// Whitelist excludes noisy file paths and commands from graph output.
+// Whitelist excludes noisy file paths, commands, and network destinations from graph output.
 type Whitelist struct {
 	pathPrefixes []string
 	pathExact    map[string]struct{}
 	pathGlobs    []string
 	commandGlobs []string
+	domainList   []string
 }
 
-// DefaultWhitelist returns the built-in path and command exclusions.
+var (
+	suffixWhitelist = []string{
+		".us-central1-a.c.k8s-packamal.internal",
+		".c.k8s-packamal.internal",
+		".packamal-dev.svc.cluster.local",
+		".svc.cluster.local",
+		".cluster.local",
+		".google.internal",
+	}
+
+	sortSuffixWhitelistOnce sync.Once
+)
+
+// DefaultWhitelist returns the built-in path, command, and domain exclusions.
 func DefaultWhitelist() Whitelist {
 	return Whitelist{
 		pathPrefixes: []string{
@@ -31,11 +47,15 @@ func DefaultWhitelist() Whitelist {
 			"/usr/lib/x86_64-linux-gnu/",
 			"/usr/lib/aarch64-linux-gnu/",
 			"/run/containers/",
+			"/root/artifacts/node-hooks",
+			"/var/lib/containers/",
+			"/app/node_modules/",
 		},
 		pathExact: map[string]struct{}{
-			"/etc/ld.so.cache": {},
-			"/execution.log": {},
+			"/etc/ld.so.cache":    {},
+			"/execution.log":      {},
 			"/execution-log.json": {},
+			"/usr/local/share/ca-certificates/mitmproxy.crt": {},
 		},
 		pathGlobs: []string{
 			"/tmp/archive*.tgz",
@@ -51,7 +71,62 @@ func DefaultWhitelist() Whitelist {
 			"/usr/bin/npm init --force",
 			"/usr/bin/npm install *",
 		},
+		domainList: []string{
+			"npmjs.org",
+			"pypi.org",
+			"pythonhosted.org",
+			"nodejs.org",
+			"visualstudio.com",
+			"vscode-cdn.net",
+			"googleapis.com",
+		},
 	}
+}
+
+func normalizeDomain(domain string) string {
+	sortSuffixWhitelistOnce.Do(func() {
+		sort.Slice(suffixWhitelist, func(i, j int) bool {
+			return len(suffixWhitelist[i]) > len(suffixWhitelist[j])
+		})
+	})
+
+	domain = strings.ToLower(domain)
+	domain = strings.TrimSuffix(domain, ".")
+	for _, suffix := range suffixWhitelist {
+		if strings.HasSuffix(domain, suffix) {
+			domain = strings.TrimSuffix(domain, suffix)
+			break
+		}
+	}
+	return strings.TrimSuffix(domain, ".")
+}
+
+func isAllowedDomain(domain, allowed string) bool {
+	return domain == allowed || strings.HasSuffix(domain, "."+allowed)
+}
+
+// IsDomainExcluded reports whether a DNS name matches the domain whitelist.
+func (w Whitelist) IsDomainExcluded(domain string) bool {
+	domain = normalizeDomain(domain)
+	for _, allowed := range w.domainList {
+		if isAllowedDomain(domain, allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+// ShouldExcludeNetworkRecord reports whether a network record should be omitted.
+func (w Whitelist) ShouldExcludeNetworkRecord(dstDNS []string) bool {
+	if len(dstDNS) == 0 {
+		return false
+	}
+	for _, name := range dstDNS {
+		if !w.IsDomainExcluded(name) {
+			return false
+		}
+	}
+	return true
 }
 
 // IsPathExcluded reports whether a file path matches the path whitelist.

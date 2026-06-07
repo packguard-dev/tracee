@@ -39,6 +39,7 @@ func FormatTableOutput(out model.Output) string {
 	b.WriteString(renderHeader(out))
 
 	iocFiles := filesByIOC(out.Files)
+	iocNetworks := networksByIOC(out.Networks)
 	for i, ioc := range out.IOCs {
 		if i > 0 {
 			b.WriteString("\n")
@@ -50,6 +51,8 @@ func FormatTableOutput(out model.Output) string {
 		b.WriteString(formatProcessTrees(out.ProcessTree, ioc))
 		b.WriteString(subsectionTitle("Files"))
 		b.WriteString(formatFiles(iocFiles[ioc.ID]))
+		b.WriteString(subsectionTitle("Network"))
+		b.WriteString(formatNetworks(iocNetworks[ioc.ID]))
 	}
 
 	return b.String()
@@ -94,6 +97,35 @@ func formatIOC(ioc model.IOCRecord) string {
 		b.WriteString(fmt.Sprintf("  Detected from: %s (event id %d)\n", ioc.DetectedFrom.Name, ioc.DetectedFrom.ID))
 	}
 
+	b.WriteString(formatPayload(ioc.Payload))
+
+	return b.String()
+}
+
+func formatPayload(payload *model.PayloadInfo) string {
+	if payload == nil {
+		return ""
+	}
+
+	var b strings.Builder
+	if payload.Path != "" {
+		b.WriteString(fmt.Sprintf("  Payload:       %s\n", payload.Path))
+	}
+	if payload.Dev != 0 {
+		b.WriteString(fmt.Sprintf("  Payload dev:   %d\n", payload.Dev))
+	}
+	if payload.Inode != 0 {
+		b.WriteString(fmt.Sprintf("  Payload inode: %d\n", payload.Inode))
+	}
+	if payload.SHA256 != "" {
+		b.WriteString(fmt.Sprintf("  Payload sha256: %s\n", payload.SHA256))
+	}
+	if payload.ArtifactPath != "" {
+		b.WriteString(fmt.Sprintf("  Artifact path: %s\n", payload.ArtifactPath))
+	}
+	if payload.Status != "" {
+		b.WriteString(fmt.Sprintf("  Payload status: %s\n", payload.Status))
+	}
 	return b.String()
 }
 
@@ -112,6 +144,10 @@ func iocFieldOrder(fields map[string]any) []iocField {
 		"pathname",
 		"script_path",
 		"domain",
+		"query",
+		"base_domain",
+		"dst",
+		"dst_port",
 		"decoy_category",
 		"dst_name",
 		"src_name",
@@ -411,6 +447,72 @@ func formatFiles(groups iocFileGroups) string {
 		b.WriteString("  (none)\n")
 	}
 	return b.String()
+}
+
+type iocNetworkGroups struct {
+	Connect []model.NetworkRecord
+}
+
+func networksByIOC(networks model.NetworkGroups) map[string]iocNetworkGroups {
+	out := make(map[string]iocNetworkGroups)
+
+	add := func(records []model.NetworkRecord) {
+		for _, record := range records {
+			for _, iocID := range record.IOCIDs {
+				group := out[iocID]
+				switch record.Operation {
+				case model.NetworkOpConnect:
+					group.Connect = append(group.Connect, record)
+				}
+				out[iocID] = group
+			}
+		}
+	}
+
+	add(networks.Connect)
+	return out
+}
+
+func formatNetworks(groups iocNetworkGroups) string {
+	var b strings.Builder
+	wrote := false
+
+	writeGroup := func(title string, records []model.NetworkRecord) {
+		if len(records) == 0 {
+			return
+		}
+		sort.SliceStable(records, func(i, j int) bool {
+			return records[i].Timestamp.Before(records[j].Timestamp)
+		})
+		b.WriteString(title + ":\n")
+		for _, record := range records {
+			b.WriteString("  " + formatConnectRecord(record) + "\n")
+		}
+		wrote = true
+	}
+
+	writeGroup("CONNECT", groups.Connect)
+
+	if !wrote {
+		b.WriteString("  (none)\n")
+	}
+	return b.String()
+}
+
+func formatConnectRecord(record model.NetworkRecord) string {
+	label := record.Dst
+	if len(record.DstDNS) > 0 {
+		label = strings.Join(record.DstDNS, ", ") + " -> " + record.Dst
+	}
+	if record.DstPort != 0 {
+		label += fmt.Sprintf(":%d", record.DstPort)
+	}
+	return fmt.Sprintf(
+		"%s  (%s)  process=%s",
+		label,
+		record.Timestamp.UTC().Format(time.RFC3339),
+		record.ProcessKey,
+	)
 }
 
 func formatReadFile(record model.FileRecord) string {
