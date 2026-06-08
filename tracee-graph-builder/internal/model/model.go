@@ -78,7 +78,7 @@ type ProcessNode struct {
 	ExitTime       *time.Time        `json:"exit_time,omitempty"`
 	ExitCode       *int32            `json:"exit_code,omitempty"`
 	SignalCode     *int32            `json:"signal_code,omitempty"`
-	ContainerID    string            `json:"container_id,omitempty"`
+	ContainerID    string            `json:"-"`
 	AncestorKeys   []string          `json:"ancestor_keys,omitempty"`
 	IOCIDs         []string          `json:"ioc_ids,omitempty"`
 	Metadata       map[string]string `json:"metadata,omitempty"`
@@ -139,6 +139,43 @@ type PayloadInfo struct {
 	Status       string `json:"status,omitempty"`
 }
 
+type ExternalIndicator struct {
+	IP       string `json:"ip"`
+	Port     int32  `json:"port,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
+	Domain   string `json:"domain,omitempty"`
+}
+
+type PcapEnrichment struct {
+	Source     string              `json:"source"`
+	WindowSec  int                 `json:"window_sec"`
+	MatchMode  string              `json:"match_mode"`
+	Indicators []ExternalIndicator `json:"indicators"`
+}
+
+const (
+	PcapMatchModeHints  = "hints"
+	PcapMatchModeWindow = "window"
+)
+
+type MitmRequest struct {
+	Timestamp     time.Time `json:"timestamp"`
+	Host          string    `json:"host"`
+	Port          int32     `json:"port,omitempty"`
+	Scheme        string    `json:"scheme,omitempty"`
+	URL           string    `json:"url"`
+	Method        string    `json:"method,omitempty"`
+	SNI           string    `json:"sni,omitempty"`
+	ResponseBytes int64     `json:"response_bytes"`
+}
+
+type MitmEnrichment struct {
+	Source    string        `json:"source"`
+	WindowSec int           `json:"window_sec"`
+	MatchMode string        `json:"match_mode"`
+	Requests  []MitmRequest `json:"requests"`
+}
+
 const (
 	PayloadStatusFound       = "found"
 	PayloadStatusNotInEvents = "not_in_events"
@@ -158,6 +195,8 @@ type IOCRecord struct {
 	RelatedNetworkIDs   []string          `json:"related_network_ids,omitempty"`
 	Relations           []IOCRelation     `json:"relations,omitempty"`
 	Payload            *PayloadInfo      `json:"payload,omitempty"`
+	Pcap               *PcapEnrichment   `json:"pcap,omitempty"`
+	Mitm               *MitmEnrichment   `json:"mitm,omitempty"`
 }
 
 type IOCRelation struct {
@@ -184,6 +223,8 @@ type OutputMeta struct {
 	GeneratedAt          time.Time `json:"generated_at"`
 	InputEvents          int       `json:"input_events"`
 	CorrelationWindowSec int       `json:"correlation_window_sec"`
+	PcapSource           string    `json:"pcap_source,omitempty"`
+	MitmSource           string    `json:"mitm_source,omitempty"`
 }
 
 type BuildOptions struct {

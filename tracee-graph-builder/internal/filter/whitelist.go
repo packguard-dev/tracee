@@ -2,9 +2,9 @@ package filter
 
 import (
 	"path/filepath"
-	"sort"
 	"strings"
-	"sync"
+
+	"github.com/aquasecurity/tracee/tracee-graph-builder/internal/netutil"
 )
 
 // Whitelist excludes noisy file paths, commands, and network destinations from graph output.
@@ -15,19 +15,6 @@ type Whitelist struct {
 	commandGlobs []string
 	domainList   []string
 }
-
-var (
-	suffixWhitelist = []string{
-		".us-central1-a.c.k8s-packamal.internal",
-		".c.k8s-packamal.internal",
-		".packamal-dev.svc.cluster.local",
-		".svc.cluster.local",
-		".cluster.local",
-		".google.internal",
-	}
-
-	sortSuffixWhitelistOnce sync.Once
-)
 
 // DefaultWhitelist returns the built-in path, command, and domain exclusions.
 func DefaultWhitelist() Whitelist {
@@ -83,31 +70,13 @@ func DefaultWhitelist() Whitelist {
 	}
 }
 
-func normalizeDomain(domain string) string {
-	sortSuffixWhitelistOnce.Do(func() {
-		sort.Slice(suffixWhitelist, func(i, j int) bool {
-			return len(suffixWhitelist[i]) > len(suffixWhitelist[j])
-		})
-	})
-
-	domain = strings.ToLower(domain)
-	domain = strings.TrimSuffix(domain, ".")
-	for _, suffix := range suffixWhitelist {
-		if strings.HasSuffix(domain, suffix) {
-			domain = strings.TrimSuffix(domain, suffix)
-			break
-		}
-	}
-	return strings.TrimSuffix(domain, ".")
-}
-
 func isAllowedDomain(domain, allowed string) bool {
 	return domain == allowed || strings.HasSuffix(domain, "."+allowed)
 }
 
 // IsDomainExcluded reports whether a DNS name matches the domain whitelist.
 func (w Whitelist) IsDomainExcluded(domain string) bool {
-	domain = normalizeDomain(domain)
+	domain = netutil.NormalizeDomain(domain)
 	for _, allowed := range w.domainList {
 		if isAllowedDomain(domain, allowed) {
 			return true

@@ -19,6 +19,8 @@ Supports:
 - NDJSON (one event per line), as produced by `tracee --output json`
 - JSON array files
 - Optional `artifacts.zip` from Tracee forensics (`--artifacts file-write`)
+- Optional pcap/pcapng from tcpdump for IOC network enrichment
+- Optional `mitm_proxy.jsonl` from mitmproxy for IOC HTTP enrichment
 
 Supported event families:
 
@@ -42,7 +44,7 @@ JSON fields:
 - `process_tree`: process nodes, parent links, exec metadata, lifecycle timestamps
 - `files`: grouped records under `READ`, `WRITE`, `DELETE`, `RENAME`
 - `networks`: grouped records under `CONNECT`
-- `iocs`: IOC events with related process keys, file IDs, network IDs, relation reasons, and optional `payload` (path, dev, inode, sha256)
+- `iocs`: IOC events with related process keys, file IDs, network IDs, relation reasons, optional `payload` (path, dev, inode, sha256), optional `pcap` external indicators (ip, port, protocol, domain), and optional `mitm` HTTP requests (url, host, sni, response_bytes, timestamp)
 
 Table sections per IOC:
 
@@ -50,6 +52,8 @@ Table sections per IOC:
 - `Process trees`: ancestry and descendants related to the IOC
 - `Files`: related `READ`, `WRITE`, `DELETE`, and `RENAME` activity
 - `Network`: related `CONNECT` activity
+- `External indicators (pcap)`: outsider IP, port, protocol, and DNS domain from optional PCAP enrichment
+- `External requests (mitm)`: URL, host, SNI, and response size from optional MITM proxy enrichment
 
 ## Usage
 
@@ -63,6 +67,9 @@ Flags:
 
 - `-input`: required input JSON path
 - `-artifacts`: optional path to `artifacts.zip` from Tracee `--artifacts file-write`
+- `-pcap`: optional path to a tcpdump pcap/pcapng file for external indicator enrichment
+- `-mitm`: optional path to `mitm_proxy.jsonl` for HTTP request enrichment
+- `-exclude-cidr`: additional internal CIDR to exclude from PCAP outsider reports (repeatable; defaults include `172.16.17.0/24`, `10.68.0.0/14`, `34.118.224.0/20`, loopback, and link-local ranges)
 - `-output`: output path (`-` or empty writes to stdout)
 - `-format`: `json` or `table` (default: `json`)
 - `-window-sec`: IOC correlation window (default: 300)
@@ -96,6 +103,41 @@ go run ./cmd/tracee-graph-builder \
   -artifacts artifacts.zip \
   -format table
 ```
+
+PCAP enrichment with a tcpdump capture:
+
+```sh
+go run ./cmd/tracee-graph-builder \
+  -input events.ndjson \
+  -pcap /path/to/capture.pcap \
+  -window-sec 300 \
+  -format table
+```
+
+tcpdump capture example:
+
+```sh
+tcpdump -i any -w capture.pcap host 10.68.0.5
+```
+
+For each IOC, PCAP enrichment scans packets within the correlation window. When IOC fields include domain or IP hints, matching external flows are reported. Otherwise all external flows in the window are included. Internal and GKE pod/service ranges are excluded by default. Standard tcpdump link types are supported (Ethernet, Linux cooked capture, and similar).
+
+MITM proxy enrichment with `mitm_proxy.jsonl`:
+
+```sh
+go run ./cmd/tracee-graph-builder \
+  -input events.ndjson \
+  -mitm mitm_proxy.jsonl \
+  -window-sec 300 \
+  -format table
+```
+
+The JSONL file is produced by the mitmproxy addon in `mitm_proxy.py`. Each line
+records one HTTP response with `destination.url`, `destination.host`,
+`tls.sni`, `payload_sizes.response_bytes`, and `timestamp`. For each IOC,
+enrichment scans requests within the correlation window. When IOC fields
+include domain or IP hints, matching requests are reported. Otherwise all
+requests in the window are included.
 
 The zip layout matches Tracee forensics output, for example:
 
@@ -155,6 +197,8 @@ File activity events are deduplicated within a 5-minute window by
 - Standalone module; does not execute Tracee or load eBPF programs.
 - Payload is resolved from the IOC process only (not ancestors/descendants).
 - SHA256 requires the payload file to be present in the artifacts zip.
+- PCAP enrichment reads a single tcpdump pcap/pcapng file (not a directory of split captures).
+- MITM enrichment reads a single `mitm_proxy.jsonl` file (not a directory).
 - Relative script paths depend on `pwd` from `sched_process_exec`.
 - Open flag classification ignores ambiguous opens.
 - Process keys fall back to PID-based identity when `unique_id` is missing.

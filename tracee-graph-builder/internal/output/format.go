@@ -53,6 +53,10 @@ func FormatTableOutput(out model.Output) string {
 		b.WriteString(formatFiles(iocFiles[ioc.ID]))
 		b.WriteString(subsectionTitle("Network"))
 		b.WriteString(formatNetworks(iocNetworks[ioc.ID]))
+		b.WriteString(subsectionTitle("External indicators (pcap)"))
+		b.WriteString(formatPcapIndicators(ioc.Pcap))
+		b.WriteString(subsectionTitle("External requests (mitm)"))
+		b.WriteString(formatMitmRequests(ioc.Mitm))
 	}
 
 	return b.String()
@@ -127,6 +131,85 @@ func formatPayload(payload *model.PayloadInfo) string {
 		b.WriteString(fmt.Sprintf("  Payload status: %s\n", payload.Status))
 	}
 	return b.String()
+}
+
+func formatPcapIndicators(pcapInfo *model.PcapEnrichment) string {
+	if pcapInfo == nil || len(pcapInfo.Indicators) == 0 {
+		return "  (none)\n"
+	}
+
+	var b strings.Builder
+	for _, indicator := range pcapInfo.Indicators {
+		line := formatExternalIndicator(indicator)
+		if line != "" {
+			b.WriteString("  " + line + "\n")
+		}
+	}
+	if b.Len() == 0 {
+		return "  (none)\n"
+	}
+	return b.String()
+}
+
+func formatMitmRequests(mitmInfo *model.MitmEnrichment) string {
+	if mitmInfo == nil || len(mitmInfo.Requests) == 0 {
+		return "  (none)\n"
+	}
+
+	var b strings.Builder
+	for _, request := range mitmInfo.Requests {
+		line := formatMitmRequest(request)
+		if line != "" {
+			b.WriteString("  " + line + "\n")
+		}
+	}
+	if b.Len() == 0 {
+		return "  (none)\n"
+	}
+	return b.String()
+}
+
+func formatMitmRequest(request model.MitmRequest) string {
+	if request.URL == "" {
+		return ""
+	}
+	parts := []string{
+		request.Timestamp.UTC().Format(time.RFC3339),
+		request.URL,
+	}
+	if request.Host != "" {
+		parts = append(parts, "host="+request.Host)
+	}
+	if request.SNI != "" {
+		parts = append(parts, "sni="+request.SNI)
+	}
+	parts = append(parts, fmt.Sprintf("response_bytes=%d", request.ResponseBytes))
+	return strings.Join(parts, " ")
+}
+
+func formatExternalIndicator(indicator model.ExternalIndicator) string {
+	if indicator.Domain != "" {
+		if indicator.Port != 0 {
+			return fmt.Sprintf(
+				"%s (%s:%d %s)",
+				indicator.Domain,
+				indicator.IP,
+				indicator.Port,
+				indicator.Protocol,
+			)
+		}
+		return fmt.Sprintf("%s (%s %s)", indicator.Domain, indicator.IP, indicator.Protocol)
+	}
+	if indicator.Port != 0 {
+		if indicator.Protocol != "" {
+			return fmt.Sprintf("%s:%d %s", indicator.IP, indicator.Port, indicator.Protocol)
+		}
+		return fmt.Sprintf("%s:%d", indicator.IP, indicator.Port)
+	}
+	if indicator.Protocol != "" {
+		return fmt.Sprintf("%s %s", indicator.IP, indicator.Protocol)
+	}
+	return indicator.IP
 }
 
 type iocField struct {
@@ -373,9 +456,6 @@ func formatProcessNode(node model.ProcessNode) (string, string) {
 			exitDetail += fmt.Sprintf(" (code=%d)", *node.ExitCode)
 		}
 		details = append(details, exitDetail)
-	}
-	if node.ContainerID != "" {
-		details = append(details, fmt.Sprintf("container: %s", node.ContainerID))
 	}
 
 	if len(details) == 0 {
