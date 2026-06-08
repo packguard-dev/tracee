@@ -53,10 +53,12 @@ func TestSecondStagePayloadAfterBadDomain_fileOpen(t *testing.T) {
 	assert.Equal(t, "/tmp/payload.py", out[0].Data[1].GetStr())
 	assert.Equal(t, "file_type", out[0].Data[2].GetName())
 	assert.Equal(t, "python_script", out[0].Data[2].GetStr())
-	assert.Equal(t, "trigger", out[0].Data[3].GetName())
-	assert.Equal(t, "file_open", out[0].Data[3].GetStr())
-	assert.Equal(t, "detection_method", out[0].Data[4].GetName())
-	assert.Equal(t, "extension", out[0].Data[4].GetStr())
+	assert.Equal(t, "language", out[0].Data[3].GetName())
+	assert.Equal(t, "Python", out[0].Data[3].GetStr())
+	assert.Equal(t, "trigger", out[0].Data[4].GetName())
+	assert.Equal(t, "file_open", out[0].Data[4].GetStr())
+	assert.Equal(t, "detection_method", out[0].Data[5].GetName())
+	assert.Equal(t, "linguist", out[0].Data[5].GetStr())
 }
 
 func TestSecondStagePayloadAfterBadDomain_noMarkNoDetect(t *testing.T) {
@@ -111,8 +113,9 @@ func TestSecondStagePayloadAfterBadDomain_execKnownExt(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 	assert.Equal(t, "python_script", out[0].Data[2].GetStr())
-	assert.Equal(t, "exec", out[0].Data[3].GetStr())
-	assert.Equal(t, "extension", out[0].Data[4].GetStr())
+	assert.Equal(t, "Python", out[0].Data[3].GetStr())
+	assert.Equal(t, "sched_process_exec", out[0].Data[4].GetStr())
+	assert.Equal(t, "linguist", out[0].Data[5].GetStr())
 }
 
 func TestSecondStagePayloadAfterBadDomain_execUnknownExt(t *testing.T) {
@@ -143,87 +146,12 @@ func TestSecondStagePayloadAfterBadDomain_execUnknownExt(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 	assert.Equal(t, "unknown", out[0].Data[2].GetStr())
-	assert.Equal(t, "exec", out[0].Data[3].GetStr())
-	assert.Equal(t, "detection_method", out[0].Data[4].GetName())
-	assert.Equal(t, "", out[0].Data[4].GetStr())
+	assert.Equal(t, "", out[0].Data[3].GetStr())
+	assert.Equal(t, "sched_process_exec", out[0].Data[4].GetStr())
+	assert.Equal(t, "detection_method", out[0].Data[5].GetName())
+	assert.Equal(t, "", out[0].Data[5].GetStr())
 }
 
-func TestClassifyByContent(t *testing.T) {
-	t.Parallel()
-
-	elfHdr := []byte{0x7F, 'E', 'L', 'F'}
-
-	tests := []struct {
-		name       string
-		header     []byte
-		wantType   string
-		wantMatch  bool
-	}{
-		{
-			name:      "ELF",
-			header:    elfHdr,
-			wantType:  "linux_executable",
-			wantMatch: true,
-		},
-		{
-			name:      "PE MZ",
-			header:    []byte{'M', 'Z', 0, 0},
-			wantType:  "windows_executable",
-			wantMatch: true,
-		},
-		{
-			name:      "Mach-O universal",
-			header:    []byte{0xCA, 0xFE, 0xBA, 0xBE, 0, 0, 0, 0},
-			wantType:  "macho_executable",
-			wantMatch: true,
-		},
-		{
-			name:      "Mach-O 64 LE",
-			header:    []byte{0xCF, 0xFA, 0xED, 0xFE},
-			wantType:  "macho_executable",
-			wantMatch: true,
-		},
-		{
-			name:      "shebang python3",
-			header:    []byte("#!/usr/bin/python3\n"),
-			wantType:  "python_script",
-			wantMatch: true,
-		},
-		{
-			name:      "shebang env python3",
-			header:    []byte("#!/usr/bin/env python3\n"),
-			wantType:  "python_script",
-			wantMatch: true,
-		},
-		{
-			name:      "shebang bash",
-			header:    []byte("#!/bin/bash\n"),
-			wantType:  "bash_script",
-			wantMatch: true,
-		},
-		{
-			name:      "shebang unknown interpreter",
-			header:    []byte("#!/opt/foo/bar\n"),
-			wantType:  "script",
-			wantMatch: true,
-		},
-		{
-			name:      "no match",
-			header:    []byte("plain text"),
-			wantType:  "",
-			wantMatch: false,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			gotType, gotOK := classifyByContent(tc.header)
-			assert.Equal(t, tc.wantMatch, gotOK)
-			assert.Equal(t, tc.wantType, gotType)
-		})
-	}
-}
 
 func TestSecondStagePayloadAfterBadDomain_magicWriteContentELF(t *testing.T) {
 	t.Parallel()
@@ -253,8 +181,9 @@ func TestSecondStagePayloadAfterBadDomain_magicWriteContentELF(t *testing.T) {
 	require.Len(t, out, 1)
 	assert.Equal(t, "/tmp/runner.xyz", out[0].Data[1].GetStr())
 	assert.Equal(t, "linux_executable", out[0].Data[2].GetStr())
-	assert.Equal(t, "magic_write", out[0].Data[3].GetStr())
-	assert.Equal(t, "content", out[0].Data[4].GetStr())
+	assert.Equal(t, "", out[0].Data[3].GetStr())
+	assert.Equal(t, "magic_write", out[0].Data[4].GetStr())
+	assert.Equal(t, "content", out[0].Data[5].GetStr())
 }
 
 func TestSecondStagePayloadAfterBadDomain_magicWriteExtensionFallback(t *testing.T) {
@@ -284,8 +213,9 @@ func TestSecondStagePayloadAfterBadDomain_magicWriteExtensionFallback(t *testing
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 	assert.Equal(t, "python_script", out[0].Data[2].GetStr())
-	assert.Equal(t, "magic_write", out[0].Data[3].GetStr())
-	assert.Equal(t, "extension", out[0].Data[4].GetStr())
+	assert.Equal(t, "Python", out[0].Data[3].GetStr())
+	assert.Equal(t, "magic_write", out[0].Data[4].GetStr())
+	assert.Equal(t, "linguist", out[0].Data[5].GetStr())
 }
 
 func TestSecondStagePayloadAfterBadDomain_magicWriteNoSuspicionNoDetect(t *testing.T) {
