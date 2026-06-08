@@ -44,7 +44,7 @@ JSON fields:
 - `process_tree`: process nodes, parent links, exec metadata, lifecycle timestamps
 - `files`: grouped records under `READ`, `WRITE`, `DELETE`, `RENAME`
 - `networks`: grouped records under `CONNECT`
-- `iocs`: IOC events with related process keys, file IDs, network IDs, relation reasons, optional `payload` (path, dev, inode, sha256), optional `pcap` external indicators (ip, port, protocol, domain), and optional `mitm` HTTP requests (url, host, sni, response_bytes, timestamp)
+- `iocs`: IOC events with related process keys, file IDs, network IDs, relation reasons, optional `payload` (path, dev, inode, sha256, file_category, file_type), optional `pcap` external indicators (ip, port, protocol, domain), and optional `mitm` HTTP requests (url, host, sni, response_bytes, timestamp)
 
 Table sections per IOC:
 
@@ -149,6 +149,10 @@ For each IOC, the tool resolves the payload file from the IOC process
 (interpreter script path when applicable, otherwise the executable path),
 looks up `dev` and `inode` from file/exec events, and when `-artifacts` is
 set reads the matching write artifact and adds a SHA256 hash to the report.
+When artifact bytes are available, `file_category` (`executable` or `script`)
+and `file_type` (for example `ELF`, `PE`, `DLL`, `Python`, `JavaScript`,
+`Bash`) are detected from content using magic-byte checks for binaries and
+go-enry for scripts.
 
 Network fixture:
 
@@ -196,7 +200,7 @@ File activity events are deduplicated within a 5-minute window by
 
 - Standalone module; does not execute Tracee or load eBPF programs.
 - Payload is resolved from the IOC process only (not ancestors/descendants).
-- SHA256 requires the payload file to be present in the artifacts zip.
+- SHA256 and file type detection require the payload file to be present in the artifacts zip.
 - PCAP enrichment reads a single tcpdump pcap/pcapng file (not a directory of split captures).
 - MITM enrichment reads a single `mitm_proxy.jsonl` file (not a directory).
 - Relative script paths depend on `pwd` from `sched_process_exec`.

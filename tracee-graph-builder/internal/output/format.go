@@ -124,6 +124,12 @@ func formatPayload(payload *model.PayloadInfo) string {
 	if payload.SHA256 != "" {
 		b.WriteString(fmt.Sprintf("  Payload sha256: %s\n", payload.SHA256))
 	}
+	if payload.FileCategory != "" {
+		b.WriteString(fmt.Sprintf("  Payload category: %s\n", payload.FileCategory))
+	}
+	if payload.FileType != "" {
+		b.WriteString(fmt.Sprintf("  Payload type:     %s\n", payload.FileType))
+	}
 	if payload.ArtifactPath != "" {
 		b.WriteString(fmt.Sprintf("  Artifact path: %s\n", payload.ArtifactPath))
 	}

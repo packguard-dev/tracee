@@ -137,6 +137,8 @@ type PayloadInfo struct {
 	SHA256       string `json:"sha256,omitempty"`
 	ArtifactPath string `json:"artifact_path,omitempty"`
 	Status       string `json:"status,omitempty"`
+	FileCategory string `json:"file_category,omitempty"`
+	FileType     string `json:"file_type,omitempty"`
 }
 
 type ExternalIndicator struct {
@@ -181,6 +183,17 @@ const (
 	PayloadStatusNotInEvents = "not_in_events"
 	PayloadStatusNotInZip    = "not_in_zip"
 	PayloadStatusNoPath      = "no_path"
+
+	PayloadCategoryExecutable = "executable"
+	PayloadCategoryScript     = "script"
+
+	PayloadTypeELF        = "ELF"
+	PayloadTypePE         = "PE"
+	PayloadTypeDLL        = "DLL"
+	PayloadTypeBinary     = "binary"
+	PayloadTypePython     = "Python"
+	PayloadTypeJavaScript = "JavaScript"
+	PayloadTypeBash       = "Bash"
 )
 
 type IOCRecord struct {

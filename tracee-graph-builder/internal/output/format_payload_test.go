@@ -25,11 +25,13 @@ func TestFormatTableOutputPayload(t *testing.T) {
 				EventName: "decoy_file_read",
 				ProcessKey: "uid:17",
 				Payload: &model.PayloadInfo{
-					Path:   "/app/AppUpdates/updater.py",
-					Dev:    265289729,
-					Inode:  354727,
-					SHA256: "abc123",
-					Status: model.PayloadStatusFound,
+					Path:         "/app/AppUpdates/updater.py",
+					Dev:          265289729,
+					Inode:        354727,
+					SHA256:       "abc123",
+					Status:       model.PayloadStatusFound,
+					FileCategory: model.PayloadCategoryScript,
+					FileType:     model.PayloadTypePython,
 				},
 			},
 		},
@@ -40,4 +42,6 @@ func TestFormatTableOutputPayload(t *testing.T) {
 	assert.Contains(t, text, "Payload dev:   265289729")
 	assert.Contains(t, text, "Payload inode: 354727")
 	assert.Contains(t, text, "Payload sha256: abc123")
+	assert.Contains(t, text, "Payload category: script")
+	assert.Contains(t, text, "Payload type:     Python")
 }
