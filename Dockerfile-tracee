@@ -1,0 +1,14 @@
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y libelf1 && rm -rf /var/lib/apt/lists/*
+
+# Copy the main binary
+COPY ./dist/tracee /usr/bin/tracee
+
+# Copy the eBPF object
+COPY ./dist/tracee.bpf.o /usr/bin/tracee.bpf.o
+
+# Copy signatures (detectors)
+COPY ./dist/signatures /dist/signatures
+
+ENTRYPOINT ["/usr/bin/tracee"]

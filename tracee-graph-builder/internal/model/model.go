@@ -29,12 +29,14 @@ var (
 	}
 
 	DefaultIOCEvents = map[string]struct{}{
-		"decoy_file_read":                  {},
-		"non_whitelisted_domain_connection": {},
-		"dns_exfiltration":                 {},
-		"sensitive_read_dns_exfiltration":  {},
-		"fileless_execution":               {},
-		"hidden_file_created":              {},
+		"decoy_file_read":                       {},
+		"non_whitelisted_domain_connection":     {},
+		"dns_exfiltration":                      {},
+		"sensitive_read_dns_exfiltration":       {},
+		"fileless_execution":                    {},
+		"hidden_file_created":                   {},
+		"second_stage_payload_after_bad_domain": {},
+		"dropped_executable":                    {},
 	}
 )
 
