@@ -79,6 +79,8 @@ func TestEnrichPayloadsWithArtifacts(t *testing.T) {
 	assert.Equal(t, model.PayloadStatusFound, payload.Status)
 	assert.NotEmpty(t, payload.SHA256)
 	assert.Contains(t, payload.ArtifactPath, "write.dev-265289729.inode-354727")
+	assert.Equal(t, model.PayloadCategoryScript, payload.FileCategory)
+	assert.Equal(t, model.PayloadTypePython, payload.FileType)
 }
 
 func TestEnrichPayloadsWithoutArtifactsZip(t *testing.T) {

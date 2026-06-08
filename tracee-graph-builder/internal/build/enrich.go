@@ -62,5 +62,6 @@ func enrichOneIOC(
 	ioc.Payload.SHA256 = artifacts.SHA256Hex(data)
 	ioc.Payload.ArtifactPath = entryPath
 	ioc.Payload.Status = model.PayloadStatusFound
+	payload.ApplyClassification(ioc.Payload, ioc.Payload.Path, data)
 	return ioc
 }

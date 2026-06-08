@@ -3,14 +3,32 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net/netip"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aquasecurity/tracee/tracee-graph-builder/internal/build"
 	"github.com/aquasecurity/tracee/tracee-graph-builder/internal/input"
 	"github.com/aquasecurity/tracee/tracee-graph-builder/internal/model"
 	"github.com/aquasecurity/tracee/tracee-graph-builder/internal/output"
+	"github.com/aquasecurity/tracee/tracee-graph-builder/internal/pcap"
 )
+
+type cidrFlag []string
+
+func (f *cidrFlag) String() string {
+	return strings.Join(*f, ",")
+}
+
+func (f *cidrFlag) Set(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	*f = append(*f, value)
+	return nil
+}
 
 func main() {
 	inputPath := flag.String("input", "", "Path to Tracee JSON input (NDJSON or JSON array)")
@@ -19,6 +37,10 @@ func main() {
 	outputFormat := flag.String("format", output.FormatJSON, "Output format: json or table")
 	windowSec := flag.Int("window-sec", 300, "IOC correlation window in seconds")
 	workers := flag.Int("workers", 0, "Worker count for parallel stages (0 uses GOMAXPROCS)")
+	pcapPath := flag.String("pcap", "", "Optional path to a tcpdump pcap/pcapng file for IOC network enrichment")
+	mitmPath := flag.String("mitm", "", "Optional path to mitm_proxy.jsonl for IOC HTTP enrichment")
+	var excludeCIDR cidrFlag
+	flag.Var(&excludeCIDR, "exclude-cidr", "Additional internal CIDR to exclude (repeatable)")
 	flag.Parse()
 
 	if *inputPath == "" {
@@ -50,6 +72,24 @@ func main() {
 		os.Exit(1)
 	}
 
+	excludeCIDRs, err := parseExcludeCIDRs(excludeCIDR)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: parse exclude-cidr: %v\n", err)
+		os.Exit(2)
+	}
+
+	graphOutput, err = build.EnrichFromPcap(graphOutput, *pcapPath, opts.CorrelationWindow, excludeCIDRs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: enrich pcap: %v\n", err)
+		os.Exit(1)
+	}
+
+	graphOutput, err = build.EnrichFromMitm(graphOutput, *mitmPath, opts.CorrelationWindow)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: enrich mitm: %v\n", err)
+		os.Exit(1)
+	}
+
 	encoded, err := output.Encode(*outputFormat, graphOutput)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: encode output: %v\n", err)
@@ -68,4 +108,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: write output: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func parseExcludeCIDRs(values []string) ([]netip.Prefix, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	return pcap.ParseCIDRs(values)
 }
