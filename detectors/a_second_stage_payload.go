@@ -3,8 +3,6 @@ package detectors
 import (
 	"bytes"
 	"context"
-	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -62,21 +60,6 @@ func evictExpiredBadDomainSuspicion() {
 	}
 }
 
-// suspiciousExtensions are file types to watch after a bad-domain DNS hit.
-var suspiciousExtensions = map[string]string{
-	".py":   "python_script",
-	".sh":   "bash_script",
-	".bash": "bash_script",
-	".dll":  "windows_library",
-	".exe":  "windows_executable",
-	".js":   "javascript_script",
-	".ts":   "typescript_script",
-	".ps1":  "powershell_script",
-	".rb":   "ruby_script",
-	".pl":   "perl_script",
-	".elf":  "linux_executable",
-}
-
 func init() {
 	register(&SecondStagePayloadAfterBadDomain{})
 }
@@ -120,6 +103,7 @@ func (d *SecondStagePayloadAfterBadDomain) GetDefinition() detection.DetectorDef
 				{Name: "domain", Type: "const char*"},
 				{Name: "file_path", Type: "const char*"},
 				{Name: "file_type", Type: "const char*"},
+				{Name: "language", Type: "const char*"},
 				{Name: "trigger", Type: "const char*"},
 				{Name: "detection_method", Type: "const char*"},
 			},
@@ -178,13 +162,13 @@ func (d *SecondStagePayloadAfterBadDomain) handleFileOpen(
 		return nil, nil
 	}
 
-	fileType, matched := classifySuspiciousFile(filePath)
+	fileType, language, matched := classifyByEnry(filePath, nil)
 	if !matched {
 		return nil, nil
 	}
 
 	d.logger.Infow("Suspicious file opened after non-whitelisted domain DNS",
-		"pid", pid, "domain", domain, "path", filePath, "type", fileType)
+		"pid", pid, "domain", domain, "path", filePath, "type", fileType, "language", language)
 
 	go sendPauseSignal(event.GetWorkload().GetContainer().GetId(), "TRC-003", filePath)
 
@@ -193,8 +177,9 @@ func (d *SecondStagePayloadAfterBadDomain) handleFileOpen(
 			v1beta1.NewStringValue("domain", domain),
 			v1beta1.NewStringValue("file_path", filePath),
 			v1beta1.NewStringValue("file_type", fileType),
+			v1beta1.NewStringValue("language", language),
 			v1beta1.NewStringValue("trigger", "file_open"),
-			v1beta1.NewStringValue("detection_method", "extension"),
+			v1beta1.NewStringValue("detection_method", "linguist"),
 		},
 	), nil
 }
@@ -217,17 +202,17 @@ func (d *SecondStagePayloadAfterBadDomain) handleExec(
 		filePath = extractStringField(event, "cmdpath")
 	}
 
-	fileType, matched := classifySuspiciousFile(filePath)
+	fileType, language, matched := classifyByEnry(filePath, nil)
 	detectMethod := ""
 	if matched {
-		detectMethod = "extension"
+		detectMethod = "linguist"
 	}
 	if !matched {
 		fileType = "unknown"
 	}
 
 	d.logger.Infow("Suspicious exec after non-whitelisted domain DNS",
-		"pid", pid, "domain", domain, "path", filePath, "type", fileType)
+		"pid", pid, "domain", domain, "path", filePath, "type", fileType, "language", language)
 
 	go sendPauseSignal(event.GetWorkload().GetContainer().GetId(), "TRC-003", filePath)
 
@@ -236,7 +221,8 @@ func (d *SecondStagePayloadAfterBadDomain) handleExec(
 			v1beta1.NewStringValue("domain", domain),
 			v1beta1.NewStringValue("file_path", filePath),
 			v1beta1.NewStringValue("file_type", fileType),
-			v1beta1.NewStringValue("trigger", "exec"),
+			v1beta1.NewStringValue("language", language),
+			v1beta1.NewStringValue("trigger", "sched_process_exec"),
 			v1beta1.NewStringValue("detection_method", detectMethod),
 		},
 	), nil
@@ -269,16 +255,18 @@ func (d *SecondStagePayloadAfterBadDomain) handleMagicWrite(
 
 	fileType, matched := classifyByContent(header)
 	detectMethod := "content"
+	var language string
+
 	if !matched {
-		detectMethod = "extension"
-		fileType, matched = classifySuspiciousFile(filePath)
+		detectMethod = "linguist"
+		fileType, language, matched = classifyByEnry(filePath, header)
 		if !matched {
 			return nil, nil
 		}
 	}
 
 	d.logger.Infow("Suspicious magic write after non-whitelisted domain DNS",
-		"pid", pid, "domain", domain, "path", filePath, "type", fileType, "method", detectMethod)
+		"pid", pid, "domain", domain, "path", filePath, "type", fileType, "language", language, "method", detectMethod)
 
 	go sendPauseSignal(event.GetWorkload().GetContainer().GetId(), "TRC-003", filePath)
 
@@ -287,74 +275,15 @@ func (d *SecondStagePayloadAfterBadDomain) handleMagicWrite(
 			v1beta1.NewStringValue("domain", domain),
 			v1beta1.NewStringValue("file_path", filePath),
 			v1beta1.NewStringValue("file_type", fileType),
+			v1beta1.NewStringValue("language", language),
 			v1beta1.NewStringValue("trigger", "magic_write"),
 			v1beta1.NewStringValue("detection_method", detectMethod),
 		},
 	), nil
 }
 
-func classifySuspiciousFile(path string) (string, bool) {
-	ext := strings.ToLower(filepath.Ext(path))
-	fileType, ok := suspiciousExtensions[ext]
-	return fileType, ok
-}
+// (classifySuspiciousFile and parseShebangInterpreter deleted, using classifyByEnry)
 
-// parseShebangInterpreter maps the interpreter from a shebang line into a coarse file_type label.
-func parseShebangInterpreter(header []byte) (string, bool) {
-	if len(header) < 2 {
-		return "", false
-	}
-	if header[0] != '#' || header[1] != '!' {
-		return "", false
-	}
-
-	idx := bytes.IndexByte(header, '\n')
-	var lineBytes []byte
-	if idx >= 0 {
-		lineBytes = header[2:idx]
-	} else {
-		lineBytes = header[2:]
-	}
-	line := strings.TrimSpace(string(lineBytes))
-	if line == "" {
-		return "", false
-	}
-
-	const envPref = "/usr/bin/env "
-	if strings.HasPrefix(line, envPref) {
-		fields := strings.Fields(line[len(envPref):])
-		if len(fields) == 0 {
-			return "", false
-		}
-		line = fields[0]
-	} else {
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			return "", false
-		}
-		line = fields[0]
-	}
-
-	base := filepath.Base(line)
-	baseLower := strings.ToLower(strings.TrimSuffix(base, ".exe"))
-
-	switch baseLower {
-	case "bash", "sh", "dash", "zsh":
-		return "bash_script", true
-	case "python", "python2", "python3":
-		return "python_script", true
-	case "perl":
-		return "perl_script", true
-	case "ruby":
-		return "ruby_script", true
-	case "node", "nodejs":
-		return "javascript_script", true
-	case "pwsh", "powershell":
-		return "powershell_script", true
-	default:
-		return "script", true
-	}
-}
 
 var (
 	machOMagicUniversal = []byte{0xCA, 0xFE, 0xBA, 0xBE}
@@ -362,7 +291,6 @@ var (
 	peDosMagic          = []byte("MZ")
 )
 
-// classifyByContent matches magic bytes or a Unix shebang in the opening bytes.
 func classifyByContent(header []byte) (string, bool) {
 	if elf.IsElf(header) {
 		return "linux_executable", true
@@ -374,7 +302,7 @@ func classifyByContent(header []byte) (string, bool) {
 		bytes.HasPrefix(header, machOMagic6432LE) {
 		return "macho_executable", true
 	}
-	return parseShebangInterpreter(header)
+	return "", false
 }
 
 func extractStringField(event *v1beta1.Event, name string) string {
