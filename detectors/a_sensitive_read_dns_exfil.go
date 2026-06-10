@@ -283,6 +283,12 @@ func (d *SensitiveReadDNSExfiltration) handleDNS(event *v1beta1.Event) []detecti
 			"category", category,
 		)
 
+		filePath := execMeta.scriptPath
+		if filePath == "" {
+			filePath = execMeta.executablePath
+		}
+		go sendPauseSignal(event.GetWorkload().GetContainer().GetId(), "TRC-006", filePath)
+
 		return detection.DetectedWithData(
 			[]*v1beta1.EventValue{
 				v1beta1.NewStringValue("query", normalizedQuery),

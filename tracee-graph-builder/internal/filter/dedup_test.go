@@ -9,6 +9,13 @@ import (
 	"github.com/aquasecurity/tracee/tracee-graph-builder/internal/model"
 )
 
+func fileDedupFields(inode, ctime uint64) map[string]any {
+	return map[string]any{
+		"inode": inode,
+		"ctime": ctime,
+	}
+}
+
 func TestDedupFileEvents_DropsWithinWindow(t *testing.T) {
 	t.Parallel()
 
@@ -18,19 +25,13 @@ func TestDedupFileEvents_DropsWithinWindow(t *testing.T) {
 			EventName:  "security_file_open",
 			ProcessKey: "uid:1",
 			Timestamp:  base,
-			Fields: map[string]any{
-				"dev":   uint32(1),
-				"inode": uint64(2),
-			},
+			Fields:     fileDedupFields(2, 100),
 		},
 		{
-			EventName:  "security_file_open",
-			ProcessKey: "uid:1",
+			EventName:   "security_file_open",
+			ProcessKey:  "uid:1",
 			Timestamp:  base.Add(2 * time.Minute),
-			Fields: map[string]any{
-				"dev":   uint32(1),
-				"inode": uint64(2),
-			},
+			Fields:     fileDedupFields(2, 100),
 		},
 	}
 
@@ -49,19 +50,13 @@ func TestDedupFileEvents_KeepsOutsideWindow(t *testing.T) {
 			EventName:  "file_modification",
 			ProcessKey: "uid:1",
 			Timestamp:  base,
-			Fields: map[string]any{
-				"dev":   uint32(1),
-				"inode": uint64(2),
-			},
+			Fields:     fileDedupFields(2, 100),
 		},
 		{
-			EventName:  "file_modification",
-			ProcessKey: "uid:1",
+			EventName:   "file_modification",
+			ProcessKey:  "uid:1",
 			Timestamp:  base.Add(6 * time.Minute),
-			Fields: map[string]any{
-				"dev":   uint32(1),
-				"inode": uint64(2),
-			},
+			Fields:     fileDedupFields(2, 100),
 		},
 	}
 
@@ -78,19 +73,13 @@ func TestDedupFileEvents_DoesNotCrossProcessKey(t *testing.T) {
 			EventName:  "security_inode_unlink",
 			ProcessKey: "uid:1",
 			Timestamp:  base,
-			Fields: map[string]any{
-				"dev":   uint32(1),
-				"inode": uint64(2),
-			},
+			Fields:     fileDedupFields(2, 100),
 		},
 		{
-			EventName:  "security_inode_unlink",
-			ProcessKey: "uid:2",
+			EventName:   "security_inode_unlink",
+			ProcessKey:  "uid:2",
 			Timestamp:  base.Add(2 * time.Minute),
-			Fields: map[string]any{
-				"dev":   uint32(1),
-				"inode": uint64(2),
-			},
+			Fields:     fileDedupFields(2, 100),
 		},
 	}
 
@@ -165,19 +154,13 @@ func TestDedupFileEvents_DoesNotDedupAcrossEventTypes(t *testing.T) {
 			EventName:  "file_modification",
 			ProcessKey: "uid:1",
 			Timestamp:  base,
-			Fields: map[string]any{
-				"dev":   uint32(1),
-				"inode": uint64(2),
-			},
+			Fields:     fileDedupFields(2, 100),
 		},
 		{
-			EventName:  "security_inode_unlink",
-			ProcessKey: "uid:1",
+			EventName:   "security_inode_unlink",
+			ProcessKey:  "uid:1",
 			Timestamp:  base.Add(2 * time.Minute),
-			Fields: map[string]any{
-				"dev":   uint32(1),
-				"inode": uint64(2),
-			},
+			Fields:     fileDedupFields(2, 100),
 		},
 	}
 

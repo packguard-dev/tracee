@@ -51,8 +51,30 @@ func ResolvePath(node model.ProcessNode) string {
 	return ""
 }
 
-// ResolveDevInode returns dev/inode candidates for a payload path, highest priority first.
-func ResolveDevInode(pathIndex map[string][]model.DevInodeRef, payloadPath string) []model.DevInodeRef {
+// ResolveInodeCandidates returns deduplicated inode candidates for a payload path, highest priority first.
+func ResolveInodeCandidates(pathIndex map[string][]model.FileIdentityRef, payloadPath string) []uint64 {
+	refs := ResolveFileIdentity(pathIndex, payloadPath)
+	if len(refs) == 0 {
+		return nil
+	}
+
+	seen := make(map[uint64]struct{}, len(refs))
+	out := make([]uint64, 0, len(refs))
+	for _, ref := range refs {
+		if ref.Inode == 0 {
+			continue
+		}
+		if _, ok := seen[ref.Inode]; ok {
+			continue
+		}
+		seen[ref.Inode] = struct{}{}
+		out = append(out, ref.Inode)
+	}
+	return out
+}
+
+// ResolveFileIdentity returns file identity candidates for a payload path, highest priority first.
+func ResolveFileIdentity(pathIndex map[string][]model.FileIdentityRef, payloadPath string) []model.FileIdentityRef {
 	if payloadPath == "" || pathIndex == nil {
 		return nil
 	}
@@ -60,23 +82,23 @@ func ResolveDevInode(pathIndex map[string][]model.DevInodeRef, payloadPath strin
 	if !ok || len(refs) == 0 {
 		return nil
 	}
-	out := make([]model.DevInodeRef, len(refs))
+	out := make([]model.FileIdentityRef, len(refs))
 	copy(out, refs)
 	sort.SliceStable(out, func(i, j int) bool {
-		pi := devInodePriority(out[i].Source)
-		pj := devInodePriority(out[j].Source)
+		pi := fileIdentityPriority(out[i].Source)
+		pj := fileIdentityPriority(out[j].Source)
 		if pi != pj {
 			return pi < pj
 		}
-		if out[i].Dev != out[j].Dev {
-			return out[i].Dev < out[j].Dev
+		if out[i].Inode != out[j].Inode {
+			return out[i].Inode < out[j].Inode
 		}
-		return out[i].Inode < out[j].Inode
+		return out[i].Ctime < out[j].Ctime
 	})
 	return out
 }
 
-func devInodePriority(source string) int {
+func fileIdentityPriority(source string) int {
 	switch source {
 	case "file_modification":
 		return 0
@@ -93,7 +115,7 @@ func devInodePriority(source string) int {
 func EnrichIOC(
 	ioc model.IOCRecord,
 	nodes map[string]model.ProcessNode,
-	pathIndex map[string][]model.DevInodeRef,
+	pathIndex map[string][]model.FileIdentityRef,
 ) model.IOCRecord {
 	node, ok := nodes[ioc.ProcessKey]
 	if !ok {
@@ -108,15 +130,15 @@ func EnrichIOC(
 	}
 
 	info := &model.PayloadInfo{Path: payloadPath}
-	candidates := ResolveDevInode(pathIndex, payloadPath)
+	candidates := ResolveFileIdentity(pathIndex, payloadPath)
 	if len(candidates) == 0 {
 		info.Status = model.PayloadStatusNotInEvents
 		ioc.Payload = info
 		return ioc
 	}
 
-	info.Dev = candidates[0].Dev
 	info.Inode = candidates[0].Inode
+	info.Ctime = candidates[0].Ctime
 	ioc.Payload = info
 	return ioc
 }

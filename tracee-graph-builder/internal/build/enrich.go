@@ -6,7 +6,7 @@ import (
 	"github.com/aquasecurity/tracee/tracee-graph-builder/internal/payload"
 )
 
-// EnrichPayloads resolves payload path, dev/inode, and optional artifact sha256 for each IOC.
+// EnrichPayloads resolves payload path, file identity, and optional artifact sha256 for each IOC.
 func EnrichPayloads(out model.Output, artifactsPath string) (model.Output, error) {
 	store, err := artifacts.OpenOptional(artifactsPath)
 	if err != nil {
@@ -17,7 +17,7 @@ func EnrichPayloads(out model.Output, artifactsPath string) (model.Output, error
 	}
 
 	nodes := out.ProcessTree.Nodes
-	pathIndex := out.PathDevInode
+	pathIndex := out.PathFileIdentity
 	enriched := make([]model.IOCRecord, len(out.IOCs))
 
 	for i, ioc := range out.IOCs {
@@ -25,14 +25,14 @@ func EnrichPayloads(out model.Output, artifactsPath string) (model.Output, error
 	}
 
 	out.IOCs = enriched
-	out.PathDevInode = nil
+	out.PathFileIdentity = nil
 	return out, nil
 }
 
 func enrichOneIOC(
 	ioc model.IOCRecord,
 	nodes map[string]model.ProcessNode,
-	pathIndex map[string][]model.DevInodeRef,
+	pathIndex map[string][]model.FileIdentityRef,
 	store *artifacts.Store,
 	artifactsRequested bool,
 ) model.IOCRecord {
@@ -41,22 +41,29 @@ func enrichOneIOC(
 		return ioc
 	}
 
-	if ioc.Payload.Status == model.PayloadStatusNotInEvents ||
-		ioc.Payload.Status == model.PayloadStatusNoPath {
+	if ioc.Payload.Status == model.PayloadStatusNoPath {
 		return ioc
 	}
 
 	if !artifactsRequested {
-		ioc.Payload.Status = ""
+		if ioc.Payload.Status == model.PayloadStatusNotInEvents {
+			ioc.Payload.Status = ""
+		}
 		return ioc
 	}
 
 	node := nodes[ioc.ProcessKey]
-	candidates := payload.ResolveDevInode(pathIndex, ioc.Payload.Path)
-	data, entryPath, err := store.FindWriteArtifact(node.ContainerID, candidates)
+	inodes := payload.ResolveInodeCandidates(pathIndex, ioc.Payload.Path)
+	data, entryPath, err := store.FindWriteArtifact(node.ContainerID, ioc.Payload.Path, inodes)
 	if err != nil {
 		ioc.Payload.Status = model.PayloadStatusNotInZip
 		return ioc
+	}
+
+	if ioc.Payload.Inode == 0 {
+		if inode, ok := store.InodeFromWrittenFile(node.ContainerID, ioc.Payload.Path); ok {
+			ioc.Payload.Inode = inode
+		}
 	}
 
 	ioc.Payload.SHA256 = artifacts.SHA256Hex(data)

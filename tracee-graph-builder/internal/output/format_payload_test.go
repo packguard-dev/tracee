@@ -26,8 +26,8 @@ func TestFormatTableOutputPayload(t *testing.T) {
 				ProcessKey: "uid:17",
 				Payload: &model.PayloadInfo{
 					Path:         "/app/AppUpdates/updater.py",
-					Dev:          265289729,
 					Inode:        354727,
+					Ctime:        1780820471644394172,
 					SHA256:       "abc123",
 					Status:       model.PayloadStatusFound,
 					FileCategory: model.PayloadCategoryScript,
@@ -39,8 +39,8 @@ func TestFormatTableOutputPayload(t *testing.T) {
 
 	text := FormatTableOutput(out)
 	assert.Contains(t, text, "Payload:       /app/AppUpdates/updater.py")
-	assert.Contains(t, text, "Payload dev:   265289729")
 	assert.Contains(t, text, "Payload inode: 354727")
+	assert.Contains(t, text, "Payload ctime: 1780820471644394172")
 	assert.Contains(t, text, "Payload sha256: abc123")
 	assert.Contains(t, text, "Payload category: script")
 	assert.Contains(t, text, "Payload type:     Python")

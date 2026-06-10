@@ -11,8 +11,8 @@ import (
 
 type dedupKey struct {
 	eventName  string
-	dev        uint32
 	inode      uint64
+	ctime      uint64
 	processKey string
 }
 
@@ -30,9 +30,9 @@ var dedupEventNames = map[string]struct{}{
 	"security_inode_unlink": {},
 }
 
-// DedupFileEvents drops duplicate file-activity events for a given (dev,inode,processKey)
-// key within the provided time window. Events that do not have dev+inode+processKey+timestamp
-// are preserved. Order is preserved.
+// DedupFileEvents drops duplicate file-activity events for a given
+// (inode,ctime,processKey) key within the provided time window.
+// Events that do not have inode+ctime+processKey+timestamp are preserved. Order is preserved.
 func DedupFileEvents(events []model.NormalizedEvent, window time.Duration) []model.NormalizedEvent {
 	if len(events) == 0 || window <= 0 {
 		return events
@@ -52,17 +52,17 @@ func DedupFileEvents(events []model.NormalizedEvent, window time.Duration) []mod
 			continue
 		}
 
-		dev, okDev := input.Uint32FromField(ev.Fields, "dev")
 		inode, okInode := input.Uint64FromField(ev.Fields, "inode")
-		if !okDev || !okInode || dev == 0 || inode == 0 {
+		ctime, okCtime := input.Uint64FromField(ev.Fields, "ctime")
+		if !okInode || !okCtime || inode == 0 || ctime == 0 {
 			out = append(out, ev)
 			continue
 		}
 
 		key := dedupKey{
 			eventName:  ev.EventName,
-			dev:        dev,
 			inode:      inode,
+			ctime:      ctime,
 			processKey: ev.ProcessKey,
 		}
 		if last, ok := lastSeen[key]; ok {
@@ -136,4 +136,3 @@ func canonicalizeDNSNames(names []string) string {
 	sort.Strings(sorted)
 	return strings.Join(sorted, ",")
 }
-

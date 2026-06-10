@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 const (
 	FileOpRead     = "READ"
@@ -93,10 +96,12 @@ type FileRecord struct {
 	Timestamp  time.Time         `json:"timestamp"`
 	ProcessKey string            `json:"process_key"`
 	EventName  string            `json:"event_name"`
-	Flags      string            `json:"flags,omitempty"`
-	Dev        uint32            `json:"dev,omitempty"`
-	Inode      uint64            `json:"inode,omitempty"`
-	IOCIDs     []string          `json:"ioc_ids,omitempty"`
+	Flags         string            `json:"flags,omitempty"`
+	ContainerID   string            `json:"container_id,omitempty"`
+	Dev           uint32            `json:"dev,omitempty"`
+	Inode         uint64            `json:"inode,omitempty"`
+	Ctime         uint64            `json:"ctime,omitempty"`
+	IOCIDs        []string          `json:"ioc_ids,omitempty"`
 	Metadata   map[string]string `json:"metadata,omitempty"`
 }
 
@@ -124,16 +129,16 @@ type NetworkGroups struct {
 	Connect []NetworkRecord `json:"CONNECT"`
 }
 
-type DevInodeRef struct {
-	Dev    uint32 `json:"dev"`
+type FileIdentityRef struct {
 	Inode  uint64 `json:"inode"`
+	Ctime  uint64 `json:"ctime"`
 	Source string `json:"source,omitempty"`
 }
 
 type PayloadInfo struct {
 	Path         string `json:"path,omitempty"`
-	Dev          uint32 `json:"dev,omitempty"`
 	Inode        uint64 `json:"inode,omitempty"`
+	Ctime        uint64 `json:"ctime,omitempty"`
 	SHA256       string `json:"sha256,omitempty"`
 	ArtifactPath string `json:"artifact_path,omitempty"`
 	Status       string `json:"status,omitempty"`
@@ -229,7 +234,20 @@ type Output struct {
 	Files        FileGroups                 `json:"files"`
 	Networks     NetworkGroups              `json:"networks"`
 	IOCs         []IOCRecord                `json:"iocs"`
-	PathDevInode map[string][]DevInodeRef   `json:"-"`
+	PathFileIdentity map[string][]FileIdentityRef `json:"-"`
+}
+
+// NormalizeContainerID maps an empty container ID to "host".
+func NormalizeContainerID(containerID string) string {
+	if containerID == "" {
+		return "host"
+	}
+	return containerID
+}
+
+// FileIdentityKey returns the canonical file identity key for inode and ctime.
+func FileIdentityKey(inode, ctime uint64) string {
+	return fmt.Sprintf("%d:%d", inode, ctime)
 }
 
 type OutputMeta struct {

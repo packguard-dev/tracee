@@ -115,11 +115,11 @@ func formatPayload(payload *model.PayloadInfo) string {
 	if payload.Path != "" {
 		b.WriteString(fmt.Sprintf("  Payload:       %s\n", payload.Path))
 	}
-	if payload.Dev != 0 {
-		b.WriteString(fmt.Sprintf("  Payload dev:   %d\n", payload.Dev))
-	}
 	if payload.Inode != 0 {
 		b.WriteString(fmt.Sprintf("  Payload inode: %d\n", payload.Inode))
+	}
+	if payload.Ctime != 0 {
+		b.WriteString(fmt.Sprintf("  Payload ctime: %d\n", payload.Ctime))
 	}
 	if payload.SHA256 != "" {
 		b.WriteString(fmt.Sprintf("  Payload sha256: %s\n", payload.SHA256))

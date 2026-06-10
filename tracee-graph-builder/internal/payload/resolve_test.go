@@ -41,20 +41,35 @@ func TestResolvePathRelativeScriptWithPwd(t *testing.T) {
 	assert.Equal(t, "/app/app.js", ResolvePath(node))
 }
 
-func TestResolveDevInodePriority(t *testing.T) {
+func TestResolveFileIdentityPriority(t *testing.T) {
 	t.Parallel()
 
-	index := map[string][]model.DevInodeRef{
+	index := map[string][]model.FileIdentityRef{
 		"/app/AppUpdates/updater.py": {
-			{Dev: 51, Inode: 354727, Source: "security_file_open"},
-			{Dev: 265289729, Inode: 354727, Source: "file_modification"},
+			{Inode: 354727, Ctime: 100, Source: "security_file_open"},
+			{Inode: 354727, Ctime: 200, Source: "file_modification"},
 		},
 	}
 
-	refs := ResolveDevInode(index, "/app/AppUpdates/updater.py")
+	refs := ResolveFileIdentity(index, "/app/AppUpdates/updater.py")
 	assert.Len(t, refs, 2)
-	assert.Equal(t, uint32(265289729), refs[0].Dev)
+	assert.Equal(t, uint64(200), refs[0].Ctime)
 	assert.Equal(t, "file_modification", refs[0].Source)
+}
+
+func TestResolveInodeCandidatesDedupesByInode(t *testing.T) {
+	t.Parallel()
+
+	index := map[string][]model.FileIdentityRef{
+		"/app/AppUpdates/updater.py": {
+			{Inode: 354727, Ctime: 100, Source: "security_file_open"},
+			{Inode: 354727, Ctime: 200, Source: "file_modification"},
+			{Inode: 354728, Ctime: 300, Source: "file_modification"},
+		},
+	}
+
+	inodes := ResolveInodeCandidates(index, "/app/AppUpdates/updater.py")
+	assert.Equal(t, []uint64{354727, 354728}, inodes)
 }
 
 func TestEnrichIOCWithoutPathIndex(t *testing.T) {

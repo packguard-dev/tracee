@@ -201,3 +201,32 @@ func TestBuilderWhitelistExcludesNoisyPathsAndCommands(t *testing.T) {
 	assert.Len(t, builder.Files().Read, 1)
 	assert.Equal(t, "/etc/shadow", builder.Files().Read[0].Path)
 }
+
+func TestBuilderIndexesFileIdentityForWhitelistedPaths(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 9, 5, 4, 43, 0, time.UTC)
+	path := "/app/node_modules/synckit/AppUpdates/updater.py"
+	events := []model.NormalizedEvent{
+		{
+			Index:      1,
+			Timestamp:  now,
+			EventName:  "file_modification",
+			ProcessKey: "uid:178",
+			Fields: map[string]any{
+				"file_path": path,
+				"inode":     uint64(355701),
+				"new_ctime": uint64(1780981483594347362),
+			},
+		},
+	}
+
+	builder := NewBuilder()
+	builder.Ingest(events)
+
+	refs := builder.PathFileIdentityIndex()[path]
+	require.Len(t, refs, 1)
+	assert.Equal(t, uint64(355701), refs[0].Inode)
+	assert.Equal(t, uint64(1780981483594347362), refs[0].Ctime)
+	assert.Empty(t, builder.Files().Write)
+}

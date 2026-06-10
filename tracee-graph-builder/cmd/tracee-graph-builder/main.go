@@ -32,7 +32,7 @@ func (f *cidrFlag) Set(value string) error {
 
 func main() {
 	inputPath := flag.String("input", "", "Path to Tracee JSON input (NDJSON or JSON array)")
-	artifactsPath := flag.String("artifacts", "", "Optional path to artifacts.zip from Tracee --artifacts file-write")
+	artifactsPath := flag.String("artifacts", "", "Optional path to artifacts.zip or extracted artifacts directory from Tracee --artifacts file-write")
 	outputPath := flag.String("output", "", "Path to write graph output (- or empty writes to stdout)")
 	outputFormat := flag.String("format", output.FormatJSON, "Output format: json or table")
 	windowSec := flag.Int("window-sec", 300, "IOC correlation window in seconds")

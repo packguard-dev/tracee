@@ -139,6 +139,32 @@ alpine-prepare: \
 UBUNTU_MAKE_CONTNAME = ubuntu-tracee-make
 UBUNTU_MAKE_DOCKERFILE = $(abspath $(shell find -name Dockerfile.ubuntu-tracee-make))
 
+# Rebuild tracee-make images when host UID/GID changed since last build.
+define check_make_image_uid
+	@if ! $(CMD_DOCKER) image inspect $(1):latest > /dev/null 2>&1; then \
+		echo "$(1) image not found, building..."; \
+		$(MAKE) -f builder/Makefile.tracee-make $(2); \
+	elif [ "$$($(CMD_DOCKER) image inspect --format '{{index .Config.Labels "tracee.uid"}}' $(1):latest 2>/dev/null)" != "$(UID)" ] \
+		|| [ "$$($(CMD_DOCKER) image inspect --format '{{index .Config.Labels "tracee.gid"}}' $(1):latest 2>/dev/null)" != "$(GID)" ]; then \
+		image_uid="$$($(CMD_DOCKER) image inspect --format '{{index .Config.Labels "tracee.uid"}}' $(1):latest 2>/dev/null)"; \
+		image_gid="$$($(CMD_DOCKER) image inspect --format '{{index .Config.Labels "tracee.gid"}}' $(1):latest 2>/dev/null)"; \
+		if [ -z "$${image_uid}" ]; then \
+			image_uid="$$($(CMD_DOCKER) run --rm $(1) id -u tracee 2>/dev/null)"; \
+			image_gid="$$($(CMD_DOCKER) run --rm $(1) id -g tracee 2>/dev/null)"; \
+		fi; \
+		echo "$(1) built for UID:GID $${image_uid}:$${image_gid}, host is $(UID):$(GID). Rebuilding..."; \
+		$(MAKE) -f builder/Makefile.tracee-make $(2); \
+	fi
+endef
+
+.PHONY: .check_alpine_image
+.check_alpine_image:
+	$(call check_make_image_uid,$(ALPINE_MAKE_CONTNAME),alpine-prepare)
+
+.PHONY: .check_ubuntu_image
+.check_ubuntu_image:
+	$(call check_make_image_uid,$(UBUNTU_MAKE_CONTNAME),ubuntu-prepare)
+
 .PHONY: ubuntu-prepare
 ubuntu-prepare: \
 	| .check_$(CMD_DOCKER) \
@@ -185,7 +211,8 @@ DOCKER_RUN_ARGS = run --rm \
 .PHONY: alpine-shell
 alpine-shell: \
 	| .check_$(CMD_DOCKER) \
-	.check_tree
+	.check_tree \
+	.check_alpine_image
 #
 	$(CMD_DOCKER) \
 		$(DOCKER_RUN_ARGS) \
@@ -195,7 +222,8 @@ alpine-shell: \
 .PHONY: ubuntu-shell
 ubuntu-shell: \
 	| .check_$(CMD_DOCKER) \
-	.check_tree
+	.check_tree \
+	.check_ubuntu_image
 #
 	$(CMD_DOCKER) \
 		$(DOCKER_RUN_ARGS) \
@@ -209,7 +237,8 @@ ubuntu-shell: \
 .PHONY: alpine-make
 alpine-make: \
 	| .check_$(CMD_DOCKER) \
-	.check_tree
+	.check_tree \
+	.check_alpine_image
 #
 ifneq ($(ARG),)
 	$(CMD_DOCKER) \
@@ -221,7 +250,8 @@ endif
 .PHONY: ubuntu-make
 ubuntu-make: \
 	| .check_$(CMD_DOCKER) \
-	.check_tree
+	.check_tree \
+	.check_ubuntu_image
 #
 ifneq ($(ARG),)
 	$(CMD_DOCKER) \

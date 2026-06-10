@@ -21,7 +21,7 @@ func TestEncodeJSON(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(string(encoded), "{\n"))
 	assert.Contains(t, string(encoded), `"iocs"`)
-	assert.NotContains(t, string(encoded), `"container_id"`)
+	assert.Contains(t, string(encoded), `"container_id": "host"`)
 }
 
 func TestEncodeTable(t *testing.T) {

@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	devInodeSourceFileModification = "file_modification"
-	devInodeSourceFileOpenWrite    = "security_file_open"
-	devInodeSourceProcessExec      = "sched_process_exec"
+	fileIdentitySourceFileModification = "file_modification"
+	fileIdentitySourceFileOpenWrite    = "security_file_open"
+	fileIdentitySourceProcessExec      = "sched_process_exec"
 )
 
 type Builder struct {
@@ -25,8 +25,8 @@ type Builder struct {
 	files                model.FileGroups
 	fileByID             map[string]model.FileRecord
 	fileByPath           map[string][]string
-	fileByInode          map[string][]string
-	pathDevInode         map[string][]model.DevInodeRef
+	fileByIdentity       map[string][]string
+	pathFileIdentity     map[string][]model.FileIdentityRef
 	networks             model.NetworkGroups
 	networkByID          map[string]model.NetworkRecord
 	networkByDomain      map[string][]string
@@ -49,8 +49,8 @@ func NewBuilderWithWhitelist(wl filter.Whitelist) *Builder {
 		nodes:                make(map[string]model.ProcessNode),
 		fileByID:             make(map[string]model.FileRecord),
 		fileByPath:           make(map[string][]string),
-		fileByInode:          make(map[string][]string),
-		pathDevInode:         make(map[string][]model.DevInodeRef),
+		fileByIdentity:       make(map[string][]string),
+		pathFileIdentity:     make(map[string][]model.FileIdentityRef),
 		networkByID:          make(map[string]model.NetworkRecord),
 		networkByDomain:      make(map[string][]string),
 		networkByAddress:     make(map[string][]string),
@@ -87,6 +87,10 @@ func (b *Builder) IngestParallel(events []model.NormalizedEvent, workers int) {
 		case "sched_process_exit":
 			b.handleExit(ev)
 		}
+	}
+
+	for _, ev := range sorted {
+		b.indexFileIdentityFromEvent(ev)
 	}
 
 	workers = parallel.WorkerCount(workers)
@@ -252,9 +256,14 @@ func (b *Builder) handleExec(ev model.NormalizedEvent) {
 		b.whitelistedProcesses[ev.ProcessKey] = struct{}{}
 	}
 	if node.ExecutablePath != "" {
-		if dev, okDev := input.Uint32FromField(ev.Fields, "dev"); okDev {
-			if inode, okInode := input.Uint64FromField(ev.Fields, "inode"); okInode && dev != 0 && inode != 0 {
-				b.indexPathDevInode(node.ExecutablePath, dev, inode, devInodeSourceProcessExec)
+		if inode, okInode := input.Uint64FromField(ev.Fields, "inode"); okInode && inode != 0 {
+			if ctime, okCtime := input.Uint64FromField(ev.Fields, "ctime"); okCtime && ctime != 0 {
+				b.indexPathFileIdentity(
+					node.ExecutablePath,
+					inode,
+					ctime,
+					fileIdentitySourceProcessExec,
+				)
 			}
 		}
 	}
@@ -289,12 +298,7 @@ func (b *Builder) handleFileOpen(ev model.NormalizedEvent) {
 	}
 	record := b.newFileRecord(ev, op, path, "", "", "security_file_open")
 	record.Flags = flagsText
-	if dev, ok := input.Uint32FromField(ev.Fields, "dev"); ok {
-		record.Dev = dev
-	}
-	if inode, ok := input.Uint64FromField(ev.Fields, "inode"); ok {
-		record.Inode = inode
-	}
+	populateFileIdentity(&record, ev)
 	b.addFileRecord(record)
 }
 
@@ -304,12 +308,7 @@ func (b *Builder) handleFileModification(ev model.NormalizedEvent) {
 		return
 	}
 	record := b.newFileRecord(ev, model.FileOpWrite, path, "", "", "file_modification")
-	if dev, ok := input.Uint32FromField(ev.Fields, "dev"); ok {
-		record.Dev = dev
-	}
-	if inode, ok := input.Uint64FromField(ev.Fields, "inode"); ok {
-		record.Inode = inode
-	}
+	populateFileIdentity(&record, ev)
 	b.addFileRecord(record)
 }
 
@@ -319,12 +318,7 @@ func (b *Builder) handleUnlink(ev model.NormalizedEvent) {
 		return
 	}
 	record := b.newFileRecord(ev, model.FileOpDelete, path, "", "", "security_inode_unlink")
-	if dev, ok := input.Uint32FromField(ev.Fields, "dev"); ok {
-		record.Dev = dev
-	}
-	if inode, ok := input.Uint64FromField(ev.Fields, "inode"); ok {
-		record.Inode = inode
-	}
+	populateFileIdentity(&record, ev)
 	b.addFileRecord(record)
 }
 
@@ -387,9 +381,7 @@ func buildFileRecord(
 		if dev, ok := input.Uint32FromField(ev.Fields, "dev"); ok {
 			record.Dev = dev
 		}
-		if inode, ok := input.Uint64FromField(ev.Fields, "inode"); ok {
-			record.Inode = inode
-		}
+		populateFileIdentity(record, ev)
 		return record
 	case "file_modification":
 		path := input.StringFromField(ev.Fields, "file_path")
@@ -410,9 +402,7 @@ func buildFileRecord(
 		if dev, ok := input.Uint32FromField(ev.Fields, "dev"); ok {
 			record.Dev = dev
 		}
-		if inode, ok := input.Uint64FromField(ev.Fields, "inode"); ok {
-			record.Inode = inode
-		}
+		populateFileIdentity(record, ev)
 		return record
 	case "security_inode_unlink":
 		path := input.StringFromField(ev.Fields, "pathname")
@@ -433,9 +423,7 @@ func buildFileRecord(
 		if dev, ok := input.Uint32FromField(ev.Fields, "dev"); ok {
 			record.Dev = dev
 		}
-		if inode, ok := input.Uint64FromField(ev.Fields, "inode"); ok {
-			record.Inode = inode
-		}
+		populateFileIdentity(record, ev)
 		return record
 	case "security_inode_rename":
 		oldPath := input.StringFromField(ev.Fields, "old_path")
@@ -548,9 +536,9 @@ func (b *Builder) addFileRecord(record model.FileRecord) {
 	if record.OldPath != "" {
 		b.fileByPath[record.OldPath] = append(b.fileByPath[record.OldPath], record.ID)
 	}
-	if record.Dev != 0 && record.Inode != 0 {
-		key := inodeKey(record.Dev, record.Inode)
-		b.fileByInode[key] = append(b.fileByInode[key], record.ID)
+	if record.Inode != 0 && record.Ctime != 0 {
+		key := model.FileIdentityKey(record.Inode, record.Ctime)
+		b.fileByIdentity[key] = append(b.fileByIdentity[key], record.ID)
 	}
 
 	switch record.Operation {
@@ -558,12 +546,12 @@ func (b *Builder) addFileRecord(record model.FileRecord) {
 		b.files.Read = append(b.files.Read, record)
 	case model.FileOpWrite:
 		b.files.Write = append(b.files.Write, record)
-		if record.Dev != 0 && record.Inode != 0 && record.Path != "" {
+		if record.Inode != 0 && record.Ctime != 0 && record.Path != "" {
 			source := record.EventName
 			if source == "" {
-				source = devInodeSourceFileModification
+				source = fileIdentitySourceFileModification
 			}
-			b.indexPathDevInode(record.Path, record.Dev, record.Inode, source)
+			b.indexPathFileIdentity(record.Path, record.Inode, record.Ctime, source)
 		}
 	case model.FileOpDelete:
 		b.files.Delete = append(b.files.Delete, record)
@@ -682,66 +670,70 @@ func (b *Builder) FileByID() map[string]model.FileRecord {
 	return b.fileByID
 }
 func (b *Builder) FileByPath() map[string][]string { return b.fileByPath }
-func (b *Builder) FileByInode() map[string][]string {
-	return b.fileByInode
+func (b *Builder) FileByIdentity() map[string][]string {
+	return b.fileByIdentity
 }
 
-func (b *Builder) PathDevInodeIndex() map[string][]model.DevInodeRef {
-	out := make(map[string][]model.DevInodeRef, len(b.pathDevInode))
-	for path, refs := range b.pathDevInode {
-		out[path] = append([]model.DevInodeRef(nil), refs...)
+func (b *Builder) PathFileIdentityIndex() map[string][]model.FileIdentityRef {
+	out := make(map[string][]model.FileIdentityRef, len(b.pathFileIdentity))
+	for path, refs := range b.pathFileIdentity {
+		out[path] = append([]model.FileIdentityRef(nil), refs...)
 	}
 	return out
 }
 
-func (b *Builder) indexPathDevInode(path string, dev uint32, inode uint64, source string) {
-	if path == "" || dev == 0 || inode == 0 {
+func (b *Builder) indexPathFileIdentity(path string, inode, ctime uint64, source string) {
+	if path == "" || inode == 0 || ctime == 0 {
 		return
 	}
-	refs := b.pathDevInode[path]
+	refs := b.pathFileIdentity[path]
 	for _, ref := range refs {
-		if ref.Dev == dev && ref.Inode == inode {
-			if devInodePriority(source) < devInodePriority(ref.Source) {
+		if ref.Inode == inode && ref.Ctime == ctime {
+			if fileIdentityPriority(source) < fileIdentityPriority(ref.Source) {
 				ref.Source = source
 				for i := range refs {
-					if refs[i].Dev == dev && refs[i].Inode == inode {
+					if refs[i].Inode == inode && refs[i].Ctime == ctime {
 						refs[i] = ref
 						break
 					}
 				}
-				b.pathDevInode[path] = sortDevInodeRefs(refs)
+				b.pathFileIdentity[path] = sortFileIdentityRefs(refs)
 			}
 			return
 		}
 	}
-	refs = append(refs, model.DevInodeRef{Dev: dev, Inode: inode, Source: source})
-	b.pathDevInode[path] = sortDevInodeRefs(refs)
+	refs = append(refs, model.FileIdentityRef{
+		Inode:  inode,
+		Ctime:  ctime,
+		Source: source,
+	})
+	b.pathFileIdentity[path] = sortFileIdentityRefs(refs)
 }
 
-func devInodePriority(source string) int {
+func fileIdentityPriority(source string) int {
 	switch source {
-	case devInodeSourceFileModification:
+	case fileIdentitySourceFileModification:
 		return 0
-	case devInodeSourceFileOpenWrite:
+	case fileIdentitySourceFileOpenWrite:
 		return 1
-	case devInodeSourceProcessExec:
+	case fileIdentitySourceProcessExec:
 		return 2
 	default:
 		return 3
 	}
 }
 
-func sortDevInodeRefs(refs []model.DevInodeRef) []model.DevInodeRef {
+func sortFileIdentityRefs(refs []model.FileIdentityRef) []model.FileIdentityRef {
 	sort.SliceStable(refs, func(i, j int) bool {
-		pi := devInodePriority(refs[i].Source)
-		pj := devInodePriority(refs[j].Source)
+		pi := fileIdentityPriority(refs[i].Source)
+		pj := fileIdentityPriority(refs[j].Source)
 		if pi != pj {
 			return pi < pj
 		}
-		if refs[i].Dev != refs[j].Dev {
-			return refs[i].Dev < refs[j].Dev
+		if refs[i].Inode != refs[j].Inode {
+			return refs[i].Inode < refs[j].Inode
 		}
-		return refs[i].Inode < refs[j].Inode
+		return refs[i].Ctime < refs[j].Ctime
 	})
 	return refs
 }
@@ -794,8 +786,58 @@ func (b *Builder) Roots() []string {
 	return roots
 }
 
-func inodeKey(dev uint32, inode uint64) string {
-	return fmt.Sprintf("%d:%d", dev, inode)
+func populateFileIdentity(record *model.FileRecord, ev model.NormalizedEvent) {
+	record.ContainerID = model.NormalizeContainerID(ev.ContainerID)
+	if inode, ok := input.Uint64FromField(ev.Fields, "inode"); ok {
+		record.Inode = inode
+	}
+	if ctime, ok := fileIdentityCtime(ev.Fields); ok {
+		record.Ctime = ctime
+	}
+}
+
+func fileIdentityCtime(fields map[string]any) (uint64, bool) {
+	if ctime, ok := input.Uint64FromField(fields, "ctime"); ok && ctime != 0 {
+		return ctime, true
+	}
+	if ctime, ok := input.Uint64FromField(fields, "new_ctime"); ok && ctime != 0 {
+		return ctime, true
+	}
+	if ctime, ok := input.Uint64FromField(fields, "old_ctime"); ok && ctime != 0 {
+		return ctime, true
+	}
+	return 0, false
+}
+
+func (b *Builder) indexFileIdentityFromEvent(ev model.NormalizedEvent) {
+	switch ev.EventName {
+	case "security_file_open":
+		path := input.StringFromField(ev.Fields, "pathname", "syscall_pathname")
+		if path == "" {
+			return
+		}
+		op, _ := classifyOpenFlags(ev.Fields["flags"])
+		if op != model.FileOpWrite {
+			return
+		}
+		inode, okInode := input.Uint64FromField(ev.Fields, "inode")
+		ctime, okCtime := fileIdentityCtime(ev.Fields)
+		if !okInode || inode == 0 || !okCtime {
+			return
+		}
+		b.indexPathFileIdentity(path, inode, ctime, fileIdentitySourceFileOpenWrite)
+	case "file_modification":
+		path := input.StringFromField(ev.Fields, "file_path")
+		if path == "" {
+			return
+		}
+		inode, okInode := input.Uint64FromField(ev.Fields, "inode")
+		ctime, okCtime := fileIdentityCtime(ev.Fields)
+		if !okInode || inode == 0 || !okCtime {
+			return
+		}
+		b.indexPathFileIdentity(path, inode, ctime, fileIdentitySourceFileModification)
+	}
 }
 
 func networkEndpointKey(dst string, port int32) string {

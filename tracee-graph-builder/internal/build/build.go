@@ -35,6 +35,6 @@ func FromEvents(events []model.NormalizedEvent, opts model.BuildOptions) model.O
 		Files:        builder.Files(),
 		Networks:     builder.Networks(),
 		IOCs:         builder.IOCs(),
-		PathDevInode: builder.PathDevInodeIndex(),
+		PathFileIdentity: builder.PathFileIdentityIndex(),
 	}
 }

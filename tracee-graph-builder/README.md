@@ -18,7 +18,7 @@ Supports:
 
 - NDJSON (one event per line), as produced by `tracee --output json`
 - JSON array files
-- Optional `artifacts.zip` from Tracee forensics (`--artifacts file-write`)
+- Optional `artifacts.zip` or extracted artifacts directory from Tracee forensics (`--artifacts file-write`)
 - Optional pcap/pcapng from tcpdump for IOC network enrichment
 - Optional `mitm_proxy.jsonl` from mitmproxy for IOC HTTP enrichment
 
@@ -44,11 +44,11 @@ JSON fields:
 - `process_tree`: process nodes, parent links, exec metadata, lifecycle timestamps
 - `files`: grouped records under `READ`, `WRITE`, `DELETE`, `RENAME`
 - `networks`: grouped records under `CONNECT`
-- `iocs`: IOC events with related process keys, file IDs, network IDs, relation reasons, optional `payload` (path, dev, inode, sha256, file_category, file_type), optional `pcap` external indicators (ip, port, protocol, domain), and optional `mitm` HTTP requests (url, host, sni, response_bytes, timestamp)
+- `iocs`: IOC events with related process keys, file IDs, network IDs, relation reasons, optional `payload` (path, inode, ctime, sha256, file_category, file_type), optional `pcap` external indicators (ip, port, protocol, domain), and optional `mitm` HTTP requests (url, host, sni, response_bytes, timestamp)
 
 Table sections per IOC:
 
-- `IOCs`: event name, timestamp, process, key IOC fields, and payload path/dev/inode/sha256 when available
+- `IOCs`: event name, timestamp, process, key IOC fields, and payload path/inode/ctime/sha256 when available
 - `Process trees`: ancestry and descendants related to the IOC
 - `Files`: related `READ`, `WRITE`, `DELETE`, and `RENAME` activity
 - `Network`: related `CONNECT` activity
@@ -66,7 +66,7 @@ go run ./cmd/tracee-graph-builder -input testdata/sample.ndjson -output /tmp/gra
 Flags:
 
 - `-input`: required input JSON path
-- `-artifacts`: optional path to `artifacts.zip` from Tracee `--artifacts file-write`
+- `-artifacts`: optional path to `artifacts.zip` or extracted artifacts directory from Tracee `--artifacts file-write`
 - `-pcap`: optional path to a tcpdump pcap/pcapng file for external indicator enrichment
 - `-mitm`: optional path to `mitm_proxy.jsonl` for HTTP request enrichment
 - `-exclude-cidr`: additional internal CIDR to exclude from PCAP outsider reports (repeatable; defaults include `172.16.17.0/24`, `10.68.0.0/14`, `34.118.224.0/20`, loopback, and link-local ranges)
@@ -95,12 +95,17 @@ go run ./cmd/tracee-graph-builder \
   -format table > /tmp/tracee-graph.txt
 ```
 
-Payload enrichment with artifacts zip:
+Payload enrichment with artifacts zip or directory:
 
 ```sh
 go run ./cmd/tracee-graph-builder \
   -input events.ndjson \
   -artifacts artifacts.zip \
+  -format table
+
+go run ./cmd/tracee-graph-builder \
+  -input events.ndjson \
+  -artifacts /path/to/extracted/artifacts \
   -format table
 ```
 
@@ -139,16 +144,30 @@ enrichment scans requests within the correlation window. When IOC fields
 include domain or IP hints, matching requests are reported. Otherwise all
 requests in the window are included.
 
-The zip layout matches Tracee forensics output, for example:
+The zip or directory layout matches Tracee forensics output, for example:
 
 ```txt
+run/artifacts/out/written_files
 run/artifacts/out/<container_id>/write.dev-<dev>.inode-<inode>
+```
+
+Each line in `written_files` maps an artifact key to the original file path:
+
+```txt
+<container_id>/write.dev-<dev>.inode-<inode> /absolute/file/path
 ```
 
 For each IOC, the tool resolves the payload file from the IOC process
 (interpreter script path when applicable, otherwise the executable path),
-looks up `dev` and `inode` from file/exec events, and when `-artifacts` is
-set reads the matching write artifact and adds a SHA256 hash to the report.
+looks up `inode` from file/exec events, and when `-artifacts` is set matches
+a `written_files` entry in this order:
+
+1. container ID + payload path + inode (strict match)
+2. container ID + inode only (fallback when the path in `written_files` differs)
+3. container ID + payload path only (fallback when no inode is available from events)
+
+It then reads the corresponding `write.dev-*.inode-*` artifact and adds a
+SHA256 hash to the report. `dev` and `ctime` are not part of the lookup key.
 When artifact bytes are available, `file_category` (`executable` or `script`)
 and `file_type` (for example `ELF`, `PE`, `DLL`, `Python`, `JavaScript`,
 `Bash`) are detected from content using magic-byte checks for binaries and
@@ -191,7 +210,7 @@ whitelisted destinations, are omitted.
 ## Event deduplication
 
 File activity events are deduplicated within a 5-minute window by
-`(event, process, dev, inode)`.
+`(event, process, inode, ctime)`.
 
 `net_tcp_connect` events are deduplicated within a 30-second window by
 `(net_tcp_connect, process, dst_dns, dst_port)`.
@@ -200,7 +219,7 @@ File activity events are deduplicated within a 5-minute window by
 
 - Standalone module; does not execute Tracee or load eBPF programs.
 - Payload is resolved from the IOC process only (not ancestors/descendants).
-- SHA256 and file type detection require the payload file to be present in the artifacts zip.
+- SHA256 and file type detection require the payload file to be present in the artifacts zip or directory.
 - PCAP enrichment reads a single tcpdump pcap/pcapng file (not a directory of split captures).
 - MITM enrichment reads a single `mitm_proxy.jsonl` file (not a directory).
 - Relative script paths depend on `pwd` from `sched_process_exec`.
@@ -211,3 +230,9 @@ File activity events are deduplicated within a 5-minute window by
 ## Development Rules
 
 See [RULES.md](RULES.md).
+
+## testing samples
+```sh
+go run ./cmd/tracee-graph-builder \
+  -input testdata/sample2/tracee.json -artifacts testdata/sample2/artifacts.zip -mitm testdata/sample2/mitm_proxy.jsonl -pcap ./testdata/sample2/network.pcap -format table > testdata/sample2/output.txt
+```

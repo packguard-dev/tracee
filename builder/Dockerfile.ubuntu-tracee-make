@@ -60,6 +60,10 @@ RUN export uid=$uid gid=$gid && \
 RUN /tmp/scripts/installation/install-golang.sh
 RUN /tmp/scripts/installation/install-go-tools.sh
 
+ARG uid=1000
+ARG gid=1000
+LABEL tracee.uid="${uid}"
+LABEL tracee.gid="${gid}"
 USER tracee
 ENV HOME=/home/tracee
 WORKDIR /tracee

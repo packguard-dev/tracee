@@ -3,6 +3,7 @@ package build
 import (
 	"archive/zip"
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +14,11 @@ import (
 
 	"github.com/aquasecurity/tracee/tracee-graph-builder/internal/input"
 	"github.com/aquasecurity/tracee/tracee-graph-builder/internal/model"
+)
+
+const (
+	testFileCtime  = uint64(1780820471644394172)
+	testArtifactDev = uint64(50)
 )
 
 func TestEnrichPayloadsWithArtifacts(t *testing.T) {
@@ -29,19 +35,20 @@ func TestEnrichPayloadsWithArtifacts(t *testing.T) {
 			Fields: map[string]any{
 				"pathname": "/usr/bin/python3.10",
 				"argv":     []string{"python3", "/app/AppUpdates/updater.py"},
-				"dev":      uint32(51),
 				"inode":    uint64(999),
+				"ctime":    uint64(111),
 			},
 		},
 		{
-			Index:      2,
-			Timestamp:  time.Now(),
-			EventName:  "file_modification",
-			ProcessKey: "uid:2",
+			Index:       2,
+			Timestamp:   time.Now(),
+			EventName:   "file_modification",
+			ProcessKey:  "uid:2",
+			ContainerID: "abc123container",
 			Fields: map[string]any{
 				"file_path": "/app/AppUpdates/updater.py",
-				"dev":       uint32(265289729),
 				"inode":     uint64(354727),
+				"ctime":     testFileCtime,
 			},
 		},
 		{
@@ -58,14 +65,15 @@ func TestEnrichPayloadsWithArtifacts(t *testing.T) {
 
 	builder := newTestBuilder(t, events)
 	out := model.Output{
-		ProcessTree: model.ProcessTree{Nodes: builder.Nodes()},
-		IOCs:        builder.IOCs(),
-		PathDevInode: builder.PathDevInodeIndex(),
+		ProcessTree:      model.ProcessTree{Nodes: builder.Nodes()},
+		IOCs:             builder.IOCs(),
+		PathFileIdentity: builder.PathFileIdentityIndex(),
 	}
 
 	zipPath := filepath.Join(t.TempDir(), "artifacts.zip")
+	payloadPath := "/app/AppUpdates/updater.py"
 	payloadContent := []byte("print('malicious')\n")
-	writeTestArtifactsZip(t, zipPath, "abc123container", 265289729, 354727, payloadContent)
+	writeTestArtifactsZip(t, zipPath, "abc123container", 354727, payloadContent, payloadPath)
 
 	enriched, err := EnrichPayloads(out, zipPath)
 	require.NoError(t, err)
@@ -73,12 +81,12 @@ func TestEnrichPayloadsWithArtifacts(t *testing.T) {
 
 	payload := enriched.IOCs[0].Payload
 	require.NotNil(t, payload)
-	assert.Equal(t, "/app/AppUpdates/updater.py", payload.Path)
-	assert.Equal(t, uint32(265289729), payload.Dev)
+	assert.Equal(t, payloadPath, payload.Path)
 	assert.Equal(t, uint64(354727), payload.Inode)
+	assert.Equal(t, testFileCtime, payload.Ctime)
 	assert.Equal(t, model.PayloadStatusFound, payload.Status)
 	assert.NotEmpty(t, payload.SHA256)
-	assert.Contains(t, payload.ArtifactPath, "write.dev-265289729.inode-354727")
+	assert.Contains(t, payload.ArtifactPath, "write.dev-50.inode-354727")
 	assert.Equal(t, model.PayloadCategoryScript, payload.FileCategory)
 	assert.Equal(t, model.PayloadTypePython, payload.FileType)
 }
@@ -88,15 +96,16 @@ func TestEnrichPayloadsWithoutArtifactsZip(t *testing.T) {
 
 	events := []model.NormalizedEvent{
 		{
-			Index:      1,
-			Timestamp:  time.Now(),
-			EventName:  "sched_process_exec",
-			ProcessKey: "uid:17",
+			Index:       1,
+			Timestamp:   time.Now(),
+			EventName:   "sched_process_exec",
+			ProcessKey:  "uid:17",
+			ContainerID: "abc123container",
 			Fields: map[string]any{
 				"pathname": "/app/AppUpdates/updater",
 				"argv":     []string{"/app/AppUpdates/updater", "skip"},
-				"dev":      uint32(51),
 				"inode":    uint64(354726),
+				"ctime":    testFileCtime,
 			},
 		},
 		{
@@ -110,9 +119,9 @@ func TestEnrichPayloadsWithoutArtifactsZip(t *testing.T) {
 
 	builder := newTestBuilder(t, events)
 	out := model.Output{
-		ProcessTree: model.ProcessTree{Nodes: builder.Nodes()},
-		IOCs:        builder.IOCs(),
-		PathDevInode: builder.PathDevInodeIndex(),
+		ProcessTree:      model.ProcessTree{Nodes: builder.Nodes()},
+		IOCs:             builder.IOCs(),
+		PathFileIdentity: builder.PathFileIdentityIndex(),
 	}
 
 	enriched, err := EnrichPayloads(out, "")
@@ -122,8 +131,8 @@ func TestEnrichPayloadsWithoutArtifactsZip(t *testing.T) {
 	payload := enriched.IOCs[0].Payload
 	require.NotNil(t, payload)
 	assert.Equal(t, "/app/AppUpdates/updater", payload.Path)
-	assert.Equal(t, uint32(51), payload.Dev)
 	assert.Equal(t, uint64(354726), payload.Inode)
+	assert.Equal(t, testFileCtime, payload.Ctime)
 	assert.Empty(t, payload.SHA256)
 	assert.Empty(t, payload.Status)
 }
@@ -145,14 +154,15 @@ func TestEnrichPayloadsWithCommittedZipFixture(t *testing.T) {
 			},
 		},
 		{
-			Index:      2,
-			Timestamp:  time.Now(),
-			EventName:  "file_modification",
-			ProcessKey: "uid:2",
+			Index:       2,
+			Timestamp:   time.Now(),
+			EventName:   "file_modification",
+			ProcessKey:  "uid:2",
+			ContainerID: "1764ed076193a786850beda1b6da422d21a68f69dd6d3d029d2348282bc1ff64",
 			Fields: map[string]any{
 				"file_path": "/app/AppUpdates/updater.py",
-				"dev":       uint32(265289729),
 				"inode":     uint64(354727),
+				"ctime":     testFileCtime,
 			},
 		},
 		{
@@ -166,12 +176,22 @@ func TestEnrichPayloadsWithCommittedZipFixture(t *testing.T) {
 
 	builder := newTestBuilder(t, events)
 	out := model.Output{
-		ProcessTree:  model.ProcessTree{Nodes: builder.Nodes()},
-		IOCs:         builder.IOCs(),
-		PathDevInode: builder.PathDevInodeIndex(),
+		ProcessTree:      model.ProcessTree{Nodes: builder.Nodes()},
+		IOCs:             builder.IOCs(),
+		PathFileIdentity: builder.PathFileIdentityIndex(),
 	}
 
-	enriched, err := EnrichPayloads(out, "../../testdata/artifacts_minimal.zip")
+	zipPath := filepath.Join(t.TempDir(), "artifacts.zip")
+	writeTestArtifactsZip(
+		t,
+		zipPath,
+		"1764ed076193a786850beda1b6da422d21a68f69dd6d3d029d2348282bc1ff64",
+		354727,
+		[]byte("print('malicious')\n"),
+		"/app/AppUpdates/updater.py",
+	)
+
+	enriched, err := EnrichPayloads(out, zipPath)
 	require.NoError(t, err)
 	require.Len(t, enriched.IOCs, 1)
 	assert.Equal(t, model.PayloadStatusFound, enriched.IOCs[0].Payload.Status)
@@ -214,41 +234,32 @@ func (b *testBuilder) IOCs() []model.IOCRecord {
 	return b.out.IOCs
 }
 
-func (b *testBuilder) PathDevInodeIndex() map[string][]model.DevInodeRef {
-	return b.out.PathDevInode
+func (b *testBuilder) PathFileIdentityIndex() map[string][]model.FileIdentityRef {
+	return b.out.PathFileIdentity
 }
 
-func writeTestArtifactsZip(t *testing.T, zipPath, containerID string, dev uint32, inode uint64, content []byte) {
+func writeTestArtifactsZip(t *testing.T, zipPath, containerID string, inode uint64, content []byte, payloadPath string) {
 	t.Helper()
 
 	var buf bytes.Buffer
 	writer := zip.NewWriter(&buf)
+	artifactName := fmt.Sprintf("write.dev-%d.inode-%d", testArtifactDev, inode)
 	entryPath := filepath.Join(
 		"run", "artifacts", "out", containerID,
-		"write.dev-"+formatUint32(dev)+".inode-"+formatUint64(inode),
+		artifactName,
 	)
 	f, err := writer.Create(entryPath)
 	require.NoError(t, err)
 	_, err = f.Write(content)
 	require.NoError(t, err)
+
+	indexPath := filepath.Join("run", "artifacts", "out", "written_files")
+	indexContent := containerID + "/" + artifactName + " " + payloadPath + "\n"
+	f, err = writer.Create(indexPath)
+	require.NoError(t, err)
+	_, err = f.Write([]byte(indexContent))
+	require.NoError(t, err)
+
 	require.NoError(t, writer.Close())
 	require.NoError(t, os.WriteFile(zipPath, buf.Bytes(), 0o644))
-}
-
-func formatUint32(v uint32) string {
-	return formatUint64(uint64(v))
-}
-
-func formatUint64(v uint64) string {
-	if v == 0 {
-		return "0"
-	}
-	var digits [20]byte
-	i := len(digits)
-	for v > 0 {
-		i--
-		digits[i] = byte('0' + v%10)
-		v /= 10
-	}
-	return string(digits[i:])
 }
