@@ -1,0 +1,7 @@
+make embedded-dirs
+make btfhub
+GOOS=linux CC=clang GOARCH=amd64 GOFIPS140=off CGO_CFLAGS="-I/tracee/dist/libbpf/include" CGO_LDFLAGS="-L/tracee/dist/libbpf/obj -lbpf" go build -tags core,ebpf,lsmsupport -ldflags="-w -extldflags \"\" -X github.com/aquasecurity/tracee/pkg/version.version=-79dbb732d -X github.com/aquasecurity/tracee/pkg/version.metrics= " -v -o dist/tracee ./cmd/tracee
+make[1]: Nothing to be done for 'btfhub'.
+# runtime/cgo
+cgo: C compiler "clang" not found: exec: "clang": executable file not found in $PATH
+make: *** [Makefile:751: dist/tracee] Error 1

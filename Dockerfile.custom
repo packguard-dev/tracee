@@ -1,0 +1,9 @@
+FROM alpine:3.18
+RUN apk add --no-cache libelf libc6-compat
+# Copy the main binary from tracee
+COPY ./dist/tracee /usr/bin/tracee
+# Copy the eBPF object
+COPY ./dist/tracee.bpf.o /usr/bin/tracee.bpf.o
+# Copy your Go detectors (signatures)
+COPY ./dist/signatures /dist/signatures
+ENTRYPOINT ["/usr/bin/tracee"]
